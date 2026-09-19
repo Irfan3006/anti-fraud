@@ -1,0 +1,126 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import NotaViewer from '../../components/NotaViewer.astro';
+import { getNota, saveNota } from '../../lib/storage';
+import { fetchNotaFromAppsScript } from '../../lib/apps-script';
+import { verifyVerifiedNotaToken, verifyAdminSessionToken } from '../../lib/security';
+import { getVerifiedTokenCookie, getAdminCookie } from '../../lib/session';
+
+export const prerender = false;
+
+const { id } = Astro.params;
+
+if (!id) {
+  return Astro.redirect('/', 302);
+}
+
+let nota = getNota(id);
+if (!nota) {
+  nota = await fetchNotaFromAppsScript(id).catch(() => null);
+  if (nota) {
+    saveNota(nota);
+  }
+}
+
+if (!nota) {
+  return new Response(null, {
+    status: 404,
+    statusText: 'Nota Not Found'
+  });
+}
+
+// 1. Verify access token cookie
+const verifiedToken = getVerifiedTokenCookie(Astro.cookies);
+const verifiedPayload = verifyVerifiedNotaToken(verifiedToken);
+const isVerified = verifiedPayload !== null && verifiedPayload.notaId === id;
+
+// 2. Allow logged-in admin to view directly
+const adminToken = getAdminCookie(Astro.cookies);
+const isAdmin = verifyAdminSessionToken(adminToken);
+
+const verificationId = verifiedPayload ? verifiedPayload.verificationId : (isAdmin ? 'ADMIN-OVERRIDE' : 'VRF-UNKNOWN');
+const verifiedAt = verifiedPayload ? verifiedPayload.verifiedAt : Date.now();
+
+const isLink = nota.type === 'link';
+const pageTitle = isLink ? (nota.title || 'Official Verified Link') : `Verified Nota ${nota.notaNumber} | Anti-Fraud Registry`;
+const pageDesc = isLink ? (nota.description || 'Verified authentic link with audit trail.') : 'Verified authentic financial document unlocked with biometric and device verification audit.';
+const pageOg = (isLink && nota.ogImage) ? nota.ogImage : `/og/nota/${nota.id}.png`;
+
+// Determine redirect state for human visitors without breaking crawler HTTP 200 OK responses
+const requiresVerification = !isVerified && !isAdmin;
+const requiresLinkRedirect = isVerified && !isAdmin && isLink && Boolean(nota.targetUrl);
+const clientRedirectUrl = requiresVerification ? `/verify/${id}` : (requiresLinkRedirect ? nota.targetUrl : null);
+---
+
+<Layout
+  title={pageTitle}
+  description={pageDesc}
+  ogImage={pageOg}
+  noindex={false}
+  isAdmin={isAdmin}
+>
+  {clientRedirectUrl ? (
+    <div class="redirect-page-wrapper">
+      <div class="redirect-spinner"></div>
+      <p class="redirect-hint">Memuat konten...</p>
+    </div>
+
+    <script is:inline define:vars={{ redirectUrl: clientRedirectUrl }}>
+      // Instant client-side transition for real users while preserving HTTP 200 OK for preview crawlers
+      window.location.replace(redirectUrl);
+    </script>
+    <noscript>
+      <meta http-equiv="refresh" content={`0;url=${clientRedirectUrl}`} />
+    </noscript>
+  ) : (
+    <div class="nota-detail-page-wrapper">
+      <div class="container-narrow">
+        <NotaViewer
+          nota={nota}
+          verificationId={verificationId}
+          verifiedAt={verifiedAt}
+        />
+      </div>
+    </div>
+  )}
+</Layout>
+
+<style>
+  .redirect-page-wrapper {
+    background-color: #060b17;
+    background: radial-gradient(circle at 50% 15%, #0f1c3d 0%, #060b17 100%);
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    color: #f1f5f9;
+    font-size: 0.9rem;
+    gap: 0.75rem;
+  }
+
+  .redirect-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(255, 255, 255, 0.12);
+    border-top-color: #60a5fa;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .nota-detail-page-wrapper {
+    background-color: var(--color-gray-100);
+    padding: clamp(1rem, 3vw, 2.5rem) 0 clamp(1.5rem, 4vw, 3.5rem) 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    width: 100%;
+  }
+</style>

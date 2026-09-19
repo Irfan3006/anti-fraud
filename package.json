@@ -1,0 +1,24 @@
+{
+  "name": "anti-fraud-nota-verification",
+  "type": "module",
+  "version": "1.0.0",
+  "license": "MIT",
+  "scripts": {
+    "dev": "astro dev --host",
+    "start": "astro dev --host",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/vercel": "^8.0.7",
+    "@resvg/resvg-js": "^2.6.2",
+    "astro": "^5.4.2",
+    "typescript": "^5.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.3.0"
+  }
+}

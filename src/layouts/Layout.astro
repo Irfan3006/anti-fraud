@@ -1,0 +1,101 @@
+---
+import '../styles/global.css';
+import Header from '../components/Header.astro';
+
+interface Props {
+  title?: string;
+  description?: string;
+  ogImage?: string;
+  canonicalUrl?: string;
+  noindex?: boolean;
+  hideHeader?: boolean;
+  hideFooter?: boolean;
+  isAdmin?: boolean;
+}
+
+const {
+  title = 'Anti-Fraud Nota Verification | Secure Anti-Tamper Registry',
+  description = 'High-security verification system for authentic receipts, invoices, and financial documents with anti-fraud audit trail.',
+  ogImage = '/og/default.png',
+  canonicalUrl,
+  noindex = false,
+  hideHeader = false,
+  hideFooter = false,
+  isAdmin = false
+} = Astro.props;
+
+const hostHeader = Astro.request.headers.get('x-forwarded-host') || Astro.request.headers.get('host') || '';
+const protoHeader = Astro.request.headers.get('x-forwarded-proto') || 'https';
+let liveOrigin = hostHeader ? `${protoHeader}://${hostHeader}` : '';
+
+if (!liveOrigin || liveOrigin.includes('localhost') || liveOrigin.includes('127.0.0.1')) {
+  liveOrigin = import.meta.env.PUBLIC_SITE_URL || Astro.site?.origin || 'https://anti-fraud-eight.vercel.app';
+}
+
+const fullCanonical = canonicalUrl ? (canonicalUrl.startsWith('http') ? canonicalUrl : `${liveOrigin}${canonicalUrl}`) : `${liveOrigin}${Astro.url.pathname}`;
+const fullOgImage = ogImage.startsWith('http') ? ogImage : `${liveOrigin}${ogImage.startsWith('/') ? ogImage : '/' + ogImage}`;
+const isJpeg = /\.jpe?g/i.test(fullOgImage) || fullOgImage.includes('jpeg') || fullOgImage.includes('jpg');
+const isWebp = /\.webp/i.test(fullOgImage);
+const ogImageType = isJpeg ? 'image/jpeg' : (isWebp ? 'image/webp' : 'image/png');
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#070d1e" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={fullCanonical} />
+
+    {noindex ? (
+      <meta name="robots" content="noindex,nofollow,noarchive" />
+    ) : (
+      <meta name="robots" content="index,follow" />
+    )}
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={fullCanonical} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={fullOgImage} />
+    <meta property="og:image:secure_url" content={fullOgImage} />
+    <meta property="og:image:type" content={ogImageType} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={title} />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content={fullCanonical} />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={fullOgImage} />
+  </head>
+  <body>
+    {!hideHeader && <Header isAdmin={isAdmin} />}
+    <main style="flex: 1; display: flex; flex-direction: column; width: 100%;">
+      <slot />
+    </main>
+
+    {!hideFooter && (
+      <footer style="background-color: var(--color-navy-950); color: var(--color-gray-400); padding: 1.5rem 0 max(1.5rem, var(--safe-bottom)) 0; font-size: clamp(0.72rem, 0.8vw + 0.45rem, 0.82rem); text-align: center; border-top: 1px solid var(--color-navy-800); width: 100%;">
+        <div class="container">
+          <p style="color: var(--color-gray-400); margin-bottom: 0.35rem; line-height: 1.4;">
+            <strong style="color: var(--color-white);">Anti-Fraud Nota Verification Network</strong> &bull; FIPS 140-2 Compliant Tamper Detection
+          </p>
+          <p style="color: var(--color-gray-500); font-size: clamp(0.68rem, 0.7vw + 0.4rem, 0.75rem); line-height: 1.4;">
+            Evidence securely hashed and cryptographically archived to Google Drive &amp; Sheets registry.
+          </p>
+        </div>
+      </footer>
+    )}
+  </body>
+</html>

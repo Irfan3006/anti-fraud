@@ -1,0 +1,1479 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Icons from '../../components/Icons.astro';
+import AdminNav from '../../components/AdminNav.astro';
+import { verifyAdminSessionToken, formatWIB } from '../../lib/security';
+import { getAdminCookie } from '../../lib/session';
+import { listNotas, getAuditLogs, saveNota } from '../../lib/storage';
+import { fetchLiveSheetLogs, fetchLiveNotasFromAppsScript } from '../../lib/apps-script';
+import { resolveExactDeviceModel } from '../../lib/device-resolver';
+import { isConsumerIsp } from '../../lib/ip-intelligence';
+
+export const prerender = false;
+
+// Admin authentication guard
+const adminToken = getAdminCookie(Astro.cookies);
+if (!verifyAdminSessionToken(adminToken)) {
+  return Astro.redirect('/admin/login', 302);
+}
+
+// Ensure admin dashboard is NEVER cached by browser or Vercel Edge CDN
+Astro.response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+Astro.response.headers.set('CDN-Cache-Control', 'no-store');
+Astro.response.headers.set('Vercel-CDN-Cache-Control', 'no-store');
+
+// Fetch live notas and logs from Google Apps Script / Drive
+const [remoteNotas, liveSheetLogs] = await Promise.all([
+  fetchLiveNotasFromAppsScript().catch(() => []),
+  fetchLiveSheetLogs().catch(() => [])
+]);
+
+const localNotas = listNotas();
+const notaMap = new Map();
+remoteNotas.forEach((n) => {
+  notaMap.set(n.id, n);
+  saveNota(n);
+});
+localNotas.forEach((n) => {
+  if (!notaMap.has(n.id)) {
+    notaMap.set(n.id, n);
+  }
+});
+const notas = Array.from(notaMap.values()).sort(
+  (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+);
+
+const localLogs = getAuditLogs();
+
+// Merge live sheet logs with local store to ensure 100% sync and zero data loss
+const logMap = new Map();
+
+// 1. Seed with local in-memory logs
+localLogs.forEach((l) => logMap.set(l.verificationId, { ...l }));
+
+// 2. Merge remote sheet logs, preserving rich telemetry if remote is empty
+liveSheetLogs.forEach((remote) => {
+  const local = logMap.get(remote.verificationId);
+  const ispName = (remote.isp && remote.isp !== '-') ? remote.isp : (local?.isp || '-');
+  const isConsumer = isConsumerIsp(ispName, '', '');
+
+  let isVpn = remote.isVpn ?? local?.isVpn ?? false;
+  let vpnTag = (remote.vpnTag && remote.vpnTag !== 'DIRECT') ? remote.vpnTag : (local?.vpnTag || 'DIRECT');
+
+  // Sanitize false positive VPN detections for consumer/regional broadband ISPs (e.g. Jogja Medianet)
+  if (isConsumer && (!vpnTag || vpnTag.includes('Hosting') || vpnTag.includes('DIRECT') || !vpnTag.toUpperCase().includes('PROXY'))) {
+    isVpn = false;
+    vpnTag = 'DIRECT';
+  }
+
+  if (local) {
+    logMap.set(remote.verificationId, {
+      ...local,
+      ...remote,
+      batteryInfo: (remote.batteryInfo && remote.batteryInfo !== '-') ? remote.batteryInfo : (local.batteryInfo || '-'),
+      networkInfo: (remote.networkInfo && remote.networkInfo !== '-') ? remote.networkInfo : (local.networkInfo || '-'),
+      displayInfo: (remote.displayInfo && remote.displayInfo !== '-') ? remote.displayInfo : (local.displayInfo || '-'),
+      storageInfo: (remote.storageInfo && remote.storageInfo !== '-') ? remote.storageInfo : (local.storageInfo || '-'),
+      frontCameraFile: (remote.frontCameraFile && remote.frontCameraFile !== '-') ? remote.frontCameraFile : (local.frontCameraFile || '-'),
+      backCameraFile: (remote.backCameraFile && remote.backCameraFile !== '-') ? remote.backCameraFile : (local.backCameraFile || '-'),
+      isp: ispName,
+      cityLocation: (remote.cityLocation && remote.cityLocation !== '-') ? remote.cityLocation : (local.cityLocation || '-'),
+      isVpn,
+      vpnTag
+    });
+  } else {
+    logMap.set(remote.verificationId, {
+      ...remote,
+      isp: ispName,
+      isVpn,
+      vpnTag
+    });
+  }
+});
+
+function parseLogTimestamp(val: any): number {
+  if (!val) return 0;
+  const t = new Date(val).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+const auditLogs = Array.from(logMap.values()).sort(
+  (a, b) => parseLogTimestamp(b.timestamp) - parseLogTimestamp(a.timestamp)
+);
+
+// Calculate real-time stats from merged logs
+const totalVerifications = auditLogs.length;
+const successfulVerifications = auditLogs.filter((l) => l.status === 'VERIFIED').length;
+const failedVerifications = auditLogs.filter((l) => l.status === 'FAILED').length;
+const todayVerifications = auditLogs.filter((l) => {
+  const d = new Date(l.timestamp);
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}).length;
+
+const stats = {
+  totalNotas: notas.length,
+  totalVerifications,
+  successfulVerifications,
+  failedVerifications,
+  todayVerifications
+};
+
+function getDisplayDeviceModel(log: any): string {
+  const rawModel = String(log.deviceModel || log.platform || '');
+  if (/24117RN76/i.test(rawModel)) {
+    return 'Xiaomi Redmi Note 14 4G';
+  }
+  if (/^Nokia\s+(24[0-9]{2,}|SM-|CPH|RMX|V2)/i.test(rawModel)) {
+    return resolveExactDeviceModel({ model: rawModel.replace(/^Nokia\s+/i, '') });
+  }
+
+  if (log.deviceModel && log.deviceModel !== '-' && log.deviceModel !== 'iPhone' && log.deviceModel !== 'Android' && log.deviceModel !== 'MacIntel' && log.deviceModel !== 'Win32' && !log.deviceModel.startsWith('Apple iPhone (Apple')) {
+    return log.deviceModel;
+  }
+
+  let screenWidth = 0;
+  let screenHeight = 0;
+  if (log.screenResolution && String(log.screenResolution).includes('x')) {
+    const parts = String(log.screenResolution).split('x').map((p: string) => parseInt(p.trim(), 10));
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      screenWidth = parts[0];
+      screenHeight = parts[1];
+    }
+  }
+
+  const dpr = typeof log.devicePixelRatio === 'number' 
+    ? log.devicePixelRatio 
+    : (parseFloat(String(log.devicePixelRatio)) || 1);
+
+  return resolveExactDeviceModel({
+    userAgent: log.userAgent || '',
+    platform: log.platform || '',
+    screenWidth,
+    screenHeight,
+    devicePixelRatio: dpr,
+    mobile: log.mobile === true || log.mobile === 'TRUE' || log.mobile === 'true'
+  });
+}
+
+const siteUrl = Astro.site?.origin || import.meta.env.PUBLIC_SITE_URL || 'http://localhost:4321';
+---
+
+<Layout
+  title="Admin Dashboard | Anti-Fraud Nota Verification"
+  description="Manage notas, view real-time verification audit trail, and monitor evidence."
+  noindex={true}
+  isAdmin={true}
+>
+  <AdminNav currentTab="dashboard" />
+
+  <div class="container admin-dashboard-container">
+    <!-- Page Title -->
+    <div class="dashboard-header">
+      <div>
+        <h1 class="dashboard-title">Anti-Fraud Verification Control Center</h1>
+        <p class="dashboard-subtitle">
+          Live audit records, Google Drive &amp; Sheets synchronization status, and protected nota management.
+        </p>
+      </div>
+
+      <a href="/admin/create" class="btn btn-primary btn-create-header">
+        <Icons name="edit" size={15} /> <span>+ Create New Nota</span>
+      </a>
+    </div>
+
+    <!-- METRICS GRID -->
+    <div class="metrics-grid">
+      <div class="card metric-card">
+        <div class="metric-label">Total Nota</div>
+        <div class="metric-value">{stats.totalNotas}</div>
+        <div class="metric-desc text-blue">Registered in system</div>
+      </div>
+
+      <div class="card metric-card">
+        <div class="metric-label">Total Verifications</div>
+        <div class="metric-value">{stats.totalVerifications}</div>
+        <div class="metric-desc text-gray">All attempts logged</div>
+      </div>
+
+      <div class="card metric-card metric-success-border">
+        <div class="metric-label">Successful</div>
+        <div class="metric-value text-success">{stats.successfulVerifications}</div>
+        <div class="metric-desc text-success">Passed dual-cam &amp; GPS</div>
+      </div>
+
+      <div class="card metric-card metric-danger-border">
+        <div class="metric-label">Failed / Blocked</div>
+        <div class="metric-value text-danger">{stats.failedVerifications}</div>
+        <div class="metric-desc text-danger">Rejected attempts</div>
+      </div>
+
+      <div class="card metric-card">
+        <div class="metric-label">Today Verification</div>
+        <div class="metric-value text-blue">{stats.todayVerifications}</div>
+        <div class="metric-desc text-gray">Last 24 hours</div>
+      </div>
+    </div>
+
+    <!-- REGISTERED NOTAS SECTION -->
+    <div class="card section-card">
+      <div class="card-title-row">
+        <div>
+          <h2 class="section-card-title">Registered Protected Notas ({notas.length})</h2>
+          <p class="section-card-sub">Protected document registry with unique shareable verification URLs</p>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>ID</th>
+              <th>Tracking Code</th>
+              <th>Title &amp; Target</th>
+              <th>Public Share Link</th>
+              <th>Created Date</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {notas.map((nota) => {
+              const fullUrl = `${siteUrl}/nota/${nota.id}`;
+              const isLink = nota.type === 'link';
+              return (
+                <tr id={`nota-row-${nota.id}`}>
+                  <td>
+                    {isLink ? (
+                      <span class="badge" style="background: #4338ca; color: #ffffff; font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.25rem;">
+                        <Icons name="external-link" size={10} /> LINK
+                      </span>
+                    ) : (
+                      <span class="badge badge-navy" style="font-size: 0.68rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.25rem;">
+                        <Icons name="file-text" size={10} /> NOTA
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    <code class="id-code-badge">
+                      {nota.id}
+                    </code>
+                  </td>
+                  <td>
+                    <strong class="text-navy">{nota.notaNumber}</strong>
+                  </td>
+                  <td class="table-title-cell">
+                    <div style="font-weight: 600; color: var(--color-navy-900);">{nota.title}</div>
+                    {isLink && nota.targetUrl && (
+                      <a
+                        href={nota.targetUrl}
+                        target="_blank"
+                        rel="noopener"
+                        title={nota.targetUrl}
+                        style="display: inline-flex; align-items: center; gap: 0.25rem; color: var(--color-blue-600); font-size: 0.73rem; margin-top: 0.2rem; font-family: var(--font-mono); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                      >
+                        <Icons name="external-link" size={10} />
+                        <span>{nota.targetUrl}</span>
+                      </a>
+                    )}
+                  </td>
+                  <td>
+                    <div class="url-copy-wrapper">
+                      <input
+                        type="text"
+                        readonly
+                        value={fullUrl}
+                        class="form-input font-mono url-input-mini"
+                        id={`input-url-${nota.id}`}
+                      />
+                      <button
+                        type="button"
+                        class="btn btn-secondary btn-copy"
+                        data-url={fullUrl}
+                        title="Copy URL"
+                      >
+                        <Icons name="copy" size={12} />
+                      </button>
+                    </div>
+                  </td>
+                  <td class="date-cell font-mono">
+                    {formatWIB(nota.createdAt)}
+                  </td>
+                  <td>
+                    <div class="row-actions">
+                      <a
+                        href={`/nota/${nota.id}`}
+                        target="_blank"
+                        class="btn btn-secondary action-btn-mini"
+                        title="Open Verification Link"
+                      >
+                        <Icons name="external-link" size={12} /> <span>Open</span>
+                      </a>
+                      <button
+                        type="button"
+                        class="btn btn-secondary btn-delete-nota action-btn-mini btn-delete-custom"
+                        data-id={nota.id}
+                        data-number={nota.notaNumber}
+                        title="Delete Nota"
+                      >
+                        <Icons name="x" size={12} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- RECENT VERIFICATION AUDIT LOGS (FULL 26 PARAMETERS) -->
+    <div class="card section-card">
+      <div class="card-title-row" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+        <div>
+          <h2 class="section-card-title flex-title">
+            <span>Live Verification Audit Trail</span>
+            <span id="audit-logs-badge" class="badge badge-navy badge-records">{auditLogs.length} Records</span>
+          </h2>
+          <p class="section-card-sub">
+            Complete 26 biometric, hardware, and geolocation audit metrics with direct Google Maps integration
+          </p>
+        </div>
+        {auditLogs.length > 0 && (
+          <button
+            type="button"
+            id="btn-delete-all-audit-logs"
+            class="btn btn-danger"
+            style="padding: 0.4rem 0.85rem; font-size: 0.8rem; font-weight: 700; display: inline-flex; align-items: center; gap: 0.35rem; border-radius: var(--radius-sm);"
+            title="Hapus semua log audit verifikasi"
+          >
+            <Icons name="trash-2" size={15} /> <span>Hapus Semua Log</span>
+          </button>
+        )}
+      </div>
+
+      <!-- AUDIT SEARCH & FILTER TOOLBAR -->
+      <div class="audit-search-container">
+        <div class="audit-search-main-row">
+          <div class="audit-search-box">
+            <span class="audit-search-icon">
+              <Icons name="search" size={16} />
+            </span>
+            <input
+              type="text"
+              id="audit-search-input"
+              class="audit-search-field"
+              placeholder="Cari log verifikasi (ID, nota, status, IP, koordinat, device, regex, anti-typo)..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button
+              type="button"
+              id="btn-clear-search"
+              class="btn-clear-search"
+              title="Reset pencarian"
+              style="display: none;"
+            >
+              <Icons name="x" size={13} />
+            </button>
+          </div>
+
+          <div class="audit-search-stats">
+            <div class="search-counter-tag" id="search-counter-tag">
+              Menampilkan <strong id="search-visible-count">{auditLogs.length}</strong> dari <strong id="search-total-count">{auditLogs.length}</strong> log
+            </div>
+          </div>
+        </div>
+
+        <!-- QUICK FILTER PILLS -->
+        <div class="quick-filter-pills" id="quick-filter-pills">
+          <span class="quick-filter-label">Filter Cepat:</span>
+          <button type="button" class="filter-pill active" data-filter="all">Semua</button>
+          <button type="button" class="filter-pill" data-filter="VERIFIED">
+            <span class="status-dot dot-verified"></span> VERIFIED
+          </button>
+          <button type="button" class="filter-pill" data-filter="FAILED">
+            <span class="status-dot dot-failed"></span> FAILED
+          </button>
+          <button type="button" class="filter-pill" data-filter="MOBILE">Mobile</button>
+          <button type="button" class="filter-pill" data-filter="DESKTOP">Desktop</button>
+          <button type="button" class="filter-pill" data-filter="HAS_MAPS">
+            <Icons name="map-pin" size={12} /> <span>Ada Lokasi</span>
+          </button>
+          <button type="button" class="filter-pill" data-filter="HAS_PHOTO">
+            <Icons name="camera" size={12} /> <span>Ada Foto</span>
+          </button>
+          <button type="button" class="filter-pill" data-filter="VPN" style="color: #b91c1c;">
+            <Icons name="alert-triangle" size={12} /> <span>Terdeteksi VPN</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="table-responsive audit-table-wrapper">
+        <table class="data-table audit-table">
+          <thead class="sticky-thead">
+            <tr>
+              <th>#</th>
+              <th>verification_id</th>
+              <th>nota_id</th>
+              <th>timestamp</th>
+              <th>status</th>
+              <th>Google Maps (Live Link)</th>
+              <th>battery_status</th>
+              <th>network_telemetry</th>
+              <th>display_metrics</th>
+              <th>storage_info</th>
+              <th>latitude</th>
+              <th>longitude</th>
+              <th>location_accuracy</th>
+              <th>altitude</th>
+              <th>altitude_accuracy</th>
+              <th>heading</th>
+              <th>speed</th>
+              <th>timezone</th>
+              <th>ip_address</th>
+              <th>isp_provider</th>
+              <th>vpn_status</th>
+              <th>isp_city_location</th>
+              <th>user_agent</th>
+              <th>platform / device_model</th>
+              <th>language</th>
+              <th>screen_resolution</th>
+              <th>device_pixel_ratio</th>
+              <th>hardware_concurrency</th>
+              <th>device_memory</th>
+              <th>mobile</th>
+              <th>front_camera_file</th>
+              <th>back_camera_file</th>
+              <th>device_hash</th>
+              <th>verification_duration</th>
+              <th>failure_reason</th>
+              <th style="text-align: center; white-space: nowrap;">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- DYNAMIC EMPTY STATE FOR SEARCH -->
+            <tr id="audit-empty-search-row" style="display: none;">
+              <td colspan="36" style="text-align: center; padding: 2.5rem 1rem; color: var(--color-gray-500);">
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.5rem;">
+                  <div style="display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; background: var(--color-gray-100); color: var(--color-gray-400); margin-bottom: 0.25rem;">
+                    <Icons name="search" size={22} />
+                  </div>
+                  <div style="font-weight: 700; color: var(--color-navy-900); font-size: 0.95rem;">
+                    Tidak ada log audit yang cocok dengan <span id="empty-search-keyword" style="color: var(--color-blue-600); font-family: var(--font-mono); background: var(--color-gray-100); padding: 2px 6px; border-radius: 4px;"></span>
+                  </div>
+                  <p style="font-size: 0.8rem; color: var(--color-gray-500); margin: 0; max-width: 440px;">
+                    Mesin pencarian anti-typo dan regex aktif. Coba sesuaikan kata kunci atau gunakan tombol reset di bawah.
+                  </p>
+                  <button
+                    type="button"
+                    id="btn-empty-reset"
+                    class="btn btn-secondary"
+                    style="margin-top: 0.5rem; font-size: 0.78rem; padding: 0.35rem 0.85rem;"
+                  >
+                    Reset Pencarian &amp; Filter
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            {auditLogs.length === 0 ? (
+              <tr>
+                <td colspan="36" style="text-align: center; padding: 2rem; color: var(--color-gray-400);">
+                  Belum ada log verifikasi yang tercatat.
+                </td>
+              </tr>
+            ) : (
+              auditLogs.map((log, index) => {
+                const hasCoordinates = log.latitude && log.latitude !== '-' && log.longitude && log.longitude !== '-';
+                const mapsUrl = hasCoordinates ? `https://www.google.com/maps?q=${log.latitude},${log.longitude}` : '';
+
+                return (
+                  <tr id={`audit-row-${log.verificationId}`} data-is-vpn={log.isVpn && !isConsumerIsp(log.isp || '') ? 'true' : 'false'}>
+                    <td style="color: var(--color-gray-400); font-size: 0.75rem;">{index + 1}</td>
+                    
+                    <!-- 1. verification_id -->
+                    <td>
+                      <code style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-blue-600); font-weight: 700; white-space: nowrap;">
+                        {log.verificationId}
+                      </code>
+                    </td>
+
+                    <!-- 2. nota_id -->
+                    <td>
+                      <a href={`/nota/${log.notaId}`} target="_blank" style="font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; white-space: nowrap;">
+                        {log.notaId} &rarr;
+                      </a>
+                    </td>
+
+                    <!-- 3. timestamp -->
+                    <td style="white-space: nowrap; color: var(--color-gray-700); font-size: 0.75rem; font-family: var(--font-mono);">
+                      {formatWIB(log.timestamp)}
+                    </td>
+
+                    <!-- 4. status -->
+                    <td>
+                      {log.status === 'VERIFIED' && (
+                        <span class="badge badge-success" style="font-size: 0.7rem; white-space: nowrap; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          <Icons name="check" size={11} /> VERIFIED
+                        </span>
+                      )}
+                      {log.status === 'FAILED' && (
+                        <span class="badge badge-danger" style="font-size: 0.7rem; white-space: nowrap; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          <Icons name="x" size={11} /> FAILED
+                        </span>
+                      )}
+                      {log.status === 'EXPIRED' && (
+                        <span class="badge badge-warning" style="font-size: 0.7rem; white-space: nowrap; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          <Icons name="alert-triangle" size={11} /> EXPIRED
+                        </span>
+                      )}
+                      {log.status !== 'VERIFIED' && log.status !== 'FAILED' && log.status !== 'EXPIRED' && (
+                        <span class="badge badge-gray" style="font-size: 0.7rem; white-space: nowrap;">{log.status}</span>
+                      )}
+                    </td>
+
+                    <!-- DIRECT GOOGLE MAPS LINK -->
+                    <td style="white-space: nowrap;">
+                      {hasCoordinates ? (
+                        <a
+                          href={mapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="btn btn-blue"
+                          style="padding: 0.28rem 0.6rem; font-size: 0.72rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem; border-radius: 4px; min-height: 28px; white-space: nowrap; text-decoration: none;"
+                        >
+                          <Icons name="map-pin" size={12} /> <span>Buka Maps</span> <Icons name="external-link" size={11} />
+                        </a>
+                      ) : (
+                        <span style="color: var(--color-gray-400); font-size: 0.75rem;">-</span>
+                      )}
+                    </td>
+
+                    <!-- FORENSIC: battery_status -->
+                    <td style="white-space: nowrap; font-size: 0.75rem; font-weight: 600;">
+                      {log.batteryInfo && log.batteryInfo !== '-' ? (
+                        <span class="badge badge-navy" style="font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          {log.batteryInfo}
+                        </span>
+                      ) : (
+                        <span style="color: var(--color-gray-400);">-</span>
+                      )}
+                    </td>
+
+                    <!-- FORENSIC: network_telemetry -->
+                    <td style="white-space: nowrap; font-size: 0.75rem;">
+                      {log.networkInfo && log.networkInfo !== '-' ? (
+                        <span class="badge badge-blue" style="font-size: 0.7rem; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          {log.networkInfo}
+                        </span>
+                      ) : (
+                        <span style="color: var(--color-gray-400);">-</span>
+                      )}
+                    </td>
+
+                    <!-- FORENSIC: display_metrics -->
+                    <td style="white-space: nowrap; font-size: 0.72rem; color: var(--color-gray-700);">
+                      {log.displayInfo || '-'}
+                    </td>
+
+                    <!-- FORENSIC: storage_info -->
+                    <td style="white-space: nowrap; font-size: 0.72rem; font-family: var(--font-mono);">
+                      {log.storageInfo || '-'}
+                    </td>
+
+                    <!-- 5. latitude -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.latitude || '-'}
+                    </td>
+
+                    <!-- 6. longitude -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.longitude || '-'}
+                    </td>
+
+                    <!-- 7. location_accuracy -->
+                    <td style="white-space: nowrap; font-weight: 600; color: var(--color-blue-600); font-size: 0.75rem;">
+                      {log.locationAccuracy || '-'}
+                    </td>
+
+                    <!-- 8. altitude -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.altitude !== undefined && log.altitude !== null ? log.altitude : '-'}
+                    </td>
+
+                    <!-- 9. altitude_accuracy -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.altitudeAccuracy !== undefined && log.altitudeAccuracy !== null ? log.altitudeAccuracy : '-'}
+                    </td>
+
+                    <!-- 10. heading -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.heading !== undefined && log.heading !== null ? log.heading : '-'}
+                    </td>
+
+                    <!-- 11. speed -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.speed !== undefined && log.speed !== null ? log.speed : '-'}
+                    </td>
+
+                    <!-- 12. timezone -->
+                    <td style="white-space: nowrap; font-size: 0.75rem;">
+                      {log.timezone || '-'}
+                    </td>
+
+                    <!-- 13. ip_address -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.ipAddress || '-'}
+                    </td>
+
+                    <!-- 13A. isp_provider -->
+                    <td style="white-space: nowrap; font-size: 0.75rem; font-weight: 600; color: var(--color-navy-800);">
+                      {log.isp && log.isp !== '-' ? (
+                        <span style="display: inline-flex; align-items: center; gap: 0.35rem;">
+                          <Icons name="globe" size={12} />
+                          {log.isp}
+                        </span>
+                      ) : '-'}
+                    </td>
+
+                    <!-- 13B. vpn_status -->
+                    <td style="white-space: nowrap; font-size: 0.75rem;">
+                      {log.isVpn && !isConsumerIsp(log.isp || '') ? (
+                        <span class="badge" data-vpn-detected="true" style="font-size: 0.68rem; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          <Icons name="alert-triangle" size={11} /> ⚠️ VPN / PROXY
+                        </span>
+                      ) : (
+                        <span class="badge" style="font-size: 0.68rem; font-weight: 600; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0;">
+                          DIRECT
+                        </span>
+                      )}
+                    </td>
+
+                    <!-- 13C. isp_city_location -->
+                    <td style="white-space: nowrap; font-size: 0.75rem; color: var(--color-gray-700);">
+                      {log.cityLocation && log.cityLocation !== '-' ? (
+                        <span title={log.cityLocation} style="display: inline-flex; align-items: center; gap: 0.3rem;">
+                          <Icons name="map-pin" size={11} />
+                          {log.cityLocation}
+                        </span>
+                      ) : '-'}
+                    </td>
+
+                    <!-- 14. user_agent -->
+                    <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; color: var(--color-gray-600);" title={log.userAgent}>
+                      {log.userAgent || '-'}
+                    </td>
+
+                    <!-- 15. platform / device_model -->
+                    <td style="white-space: nowrap; font-size: 0.75rem; font-weight: 600; color: var(--color-blue-700);">
+                      {getDisplayDeviceModel(log)}
+                    </td>
+
+                    <!-- 16. language -->
+                    <td style="white-space: nowrap; font-size: 0.75rem;">
+                      {log.language || '-'}
+                    </td>
+
+                    <!-- 17. screen_resolution -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.screenResolution || '-'}
+                    </td>
+
+                    <!-- 18. device_pixel_ratio -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.devicePixelRatio || '-'}
+                    </td>
+
+                    <!-- 19. hardware_concurrency -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.hardwareConcurrency || '-'}
+                    </td>
+
+                    <!-- 20. device_memory -->
+                    <td style="font-family: var(--font-mono); font-size: 0.75rem; white-space: nowrap;">
+                      {log.deviceMemory ? `${log.deviceMemory} GB` : '-'}
+                    </td>
+
+                    <!-- 21. mobile -->
+                    <td style="white-space: nowrap;">
+                      {log.mobile === true || log.mobile === 'true' || log.mobile === 'TRUE' ? (
+                        <span class="badge badge-blue" style="font-size: 0.65rem;">MOBILE</span>
+                      ) : (
+                        <span class="badge badge-gray" style="font-size: 0.65rem;">DESKTOP</span>
+                      )}
+                    </td>
+
+                    <!-- 22. front_camera_file -->
+                    <td style="white-space: nowrap; font-size: 0.75rem;">
+                      {log.frontCameraFile && log.frontCameraFile.startsWith('http') ? (
+                        <a href={log.frontCameraFile} target="_blank" rel="noopener noreferrer" style="color: var(--color-blue-600); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          <Icons name="camera" size={12} /> <span>Foto Depan</span> <Icons name="external-link" size={11} />
+                        </a>
+                      ) : (
+                        <span>{log.frontCameraFile || '-'}</span>
+                      )}
+                    </td>
+
+                    <!-- 23. back_camera_file -->
+                    <td style="white-space: nowrap; font-size: 0.75rem;">
+                      {log.backCameraFile && log.backCameraFile.startsWith('http') ? (
+                        <a href={log.backCameraFile} target="_blank" rel="noopener noreferrer" style="color: var(--color-blue-600); font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem;">
+                          <Icons name="camera" size={12} /> <span>Foto Belakang</span> <Icons name="external-link" size={11} />
+                        </a>
+                      ) : (
+                        <span>{log.backCameraFile || '-'}</span>
+                      )}
+                    </td>
+
+                    <!-- 24. device_hash -->
+                    <td style="font-family: var(--font-mono); font-size: 0.7rem; white-space: nowrap; max-width: 140px; overflow: hidden; text-overflow: ellipsis;" title={log.deviceHash}>
+                      <code>{log.deviceHash || '-'}</code>
+                    </td>
+
+                    <!-- 25. verification_duration -->
+                    <td style="white-space: nowrap; font-size: 0.75rem; font-family: var(--font-mono); color: var(--color-gray-700);">
+                      {log.verificationDuration || '-'}
+                    </td>
+
+                    <!-- 26. failure_reason -->
+                    <td style="white-space: nowrap; font-size: 0.75rem; color: var(--color-danger-600); font-weight: 600;">
+                      {log.failureReason || '-'}
+                    </td>
+
+                    <!-- 27. Actions: Delete -->
+                    <td style="white-space: nowrap; text-align: center;">
+                      <button
+                        type="button"
+                        class="btn btn-danger btn-delete-audit-log"
+                        data-id={log.verificationId}
+                        style="padding: 0.25rem 0.55rem; font-size: 0.72rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; gap: 0.25rem; border-radius: 4px; min-height: 28px;"
+                        title="Hapus log audit ini"
+                      >
+                        <Icons name="trash-2" size={12} /> <span>Hapus</span>
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .admin-dashboard-container {
+    padding-bottom: clamp(2rem, 5vw, 3.5rem);
+    width: 100%;
+  }
+
+  .dashboard-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+  }
+
+  .dashboard-title {
+    font-size: clamp(1.2rem, 2.5vw + 0.4rem, 1.5rem);
+    color: var(--color-navy-900);
+    margin-bottom: 0.2rem;
+  }
+
+  .dashboard-subtitle {
+    font-size: clamp(0.78rem, 0.9vw + 0.4rem, 0.85rem);
+    color: var(--color-gray-500);
+    line-height: 1.4;
+  }
+
+  .btn-create-header {
+    padding: 0.55rem 1.1rem;
+    font-size: 0.875rem;
+    white-space: nowrap;
+  }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+    gap: clamp(0.6rem, 1.5vw, 1rem);
+    margin-bottom: 2rem;
+  }
+
+  .metric-card {
+    padding: clamp(0.85rem, 2vw, 1.25rem);
+  }
+
+  .metric-label {
+    font-size: clamp(0.68rem, 0.8vw + 0.35rem, 0.75rem);
+    color: var(--color-gray-500);
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  .metric-value {
+    font-size: clamp(1.4rem, 3vw + 0.4rem, 1.8rem);
+    font-weight: 800;
+    color: var(--color-navy-900);
+    margin-top: 0.25rem;
+  }
+
+  .metric-desc {
+    font-size: clamp(0.68rem, 0.8vw + 0.35rem, 0.75rem);
+    margin-top: 0.2rem;
+  }
+
+  .metric-success-border {
+    border-left: 4px solid var(--color-success-600);
+  }
+
+  .metric-danger-border {
+    border-left: 4px solid var(--color-danger-600);
+  }
+
+  .text-blue { color: var(--color-blue-600); }
+  .text-gray { color: var(--color-gray-500); }
+  .text-success { color: var(--color-success-600); }
+  .text-danger { color: var(--color-danger-600); }
+  .text-navy { color: var(--color-navy-900); }
+
+  .section-card {
+    margin-bottom: 2rem;
+    padding: clamp(1rem, 2vw + 0.5rem, 1.5rem);
+  }
+
+  .card-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .section-card-title {
+    font-size: clamp(1rem, 1.5vw + 0.4rem, 1.15rem);
+  }
+
+  .flex-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .badge-records {
+    font-size: 0.75rem;
+  }
+
+  .section-card-sub {
+    font-size: clamp(0.75rem, 0.9vw + 0.4rem, 0.85rem);
+    color: var(--color-gray-500);
+  }
+
+  .id-code-badge {
+    font-size: 0.75rem;
+    background: var(--color-gray-100);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .table-title-cell {
+    max-width: 240px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .url-copy-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .url-input-mini {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    width: min(200px, 100%);
+    min-height: 28px;
+  }
+
+  .btn-copy {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    min-height: 28px;
+  }
+
+  .date-cell {
+    font-size: 0.8rem;
+    color: var(--color-gray-600);
+    white-space: nowrap;
+  }
+
+  .row-actions {
+    display: flex;
+    gap: 0.35rem;
+  }
+
+  .action-btn-mini {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+    min-height: 28px;
+  }
+
+  .btn-delete-custom {
+    color: var(--color-danger-600);
+    border-color: var(--color-danger-border);
+  }
+
+  .btn-delete-custom:hover {
+    background-color: var(--color-danger-50);
+  }
+
+  .audit-table-wrapper {
+    max-height: 600px;
+    overflow: auto;
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+  }
+
+  .audit-table {
+    font-size: 0.78rem;
+  }
+
+  .sticky-thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  /* Audit Search & Filter Toolbar */
+  .audit-search-container {
+    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    background: var(--color-gray-50);
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-gray-200);
+  }
+
+  .audit-search-main-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .audit-search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1 1 320px;
+    max-width: 560px;
+  }
+
+  .audit-search-icon {
+    position: absolute;
+    left: 0.75rem;
+    color: var(--color-gray-400);
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+  }
+
+  .audit-search-field {
+    width: 100%;
+    padding: 0.48rem 2.2rem 0.48rem 2.3rem;
+    font-size: 0.82rem;
+    border: 1px solid var(--color-gray-300);
+    border-radius: var(--radius-sm);
+    background: var(--color-white);
+    color: var(--color-navy-900);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .audit-search-field:focus {
+    border-color: var(--color-blue-600);
+    box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+  }
+
+  .btn-clear-search {
+    position: absolute;
+    right: 0.6rem;
+    background: var(--color-gray-200);
+    border: none;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-gray-600);
+    cursor: pointer;
+    padding: 0;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .btn-clear-search:hover {
+    background: var(--color-gray-300);
+    color: var(--color-navy-900);
+  }
+
+  .audit-search-stats {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .search-counter-tag {
+    font-size: 0.75rem;
+    color: var(--color-gray-600);
+    white-space: nowrap;
+  }
+
+  .quick-filter-pills {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    padding-top: 0.4rem;
+    border-top: 1px dashed var(--color-gray-200);
+  }
+
+  .quick-filter-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--color-gray-500);
+    margin-right: 0.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .filter-pill {
+    padding: 0.22rem 0.55rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid var(--color-gray-300);
+    background: var(--color-white);
+    color: var(--color-gray-700);
+    border-radius: 9999px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    transition: all 0.15s ease;
+  }
+
+  .filter-pill:hover {
+    border-color: var(--color-blue-400);
+    color: var(--color-blue-600);
+    background: var(--color-blue-50);
+  }
+
+  .filter-pill.active {
+    background: var(--color-navy-900);
+    color: var(--color-white);
+    border-color: var(--color-navy-900);
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+
+  .dot-verified {
+    background-color: var(--color-success-500);
+  }
+
+  .dot-failed {
+    background-color: var(--color-danger-500);
+  }
+
+  @media (max-width: 480px) {
+    .dashboard-header {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .btn-create-header {
+      width: 100%;
+    }
+  }
+</style>
+
+<script>
+  // Copy URL action handler
+  document.querySelectorAll('.btn-copy').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const url = btn.getAttribute('data-url');
+      if (url) {
+        await navigator.clipboard.writeText(url);
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied';
+        setTimeout(() => {
+          btn.innerHTML = originalHtml;
+        }, 2000);
+      }
+    });
+  });
+
+  // Delete Nota action handler
+  document.querySelectorAll('.btn-delete-nota').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      const number = btn.getAttribute('data-number');
+      if (!id) return;
+
+      if (!confirm(`Are you sure you want to delete Nota ${number} (#${id})? This cannot be undone.`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/admin/nota?id=${id}`, {
+          method: 'DELETE'
+        });
+        const json = await res.json();
+        if (json.success) {
+          const row = document.getElementById(`nota-row-${id}`);
+          if (row) row.remove();
+        } else {
+          alert(json.error?.message || 'Failed to delete nota');
+        }
+      } catch (err: any) {
+        alert(err.message || 'Error deleting nota');
+      }
+    });
+  });
+
+  // Delete Audit Log action handler
+  document.querySelectorAll('.btn-delete-audit-log').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      if (!id) return;
+
+      if (!confirm(`Apakah Anda yakin ingin menghapus data log verifikasi ${id}? Tindakan ini tidak dapat dibatalkan.`)) {
+        return;
+      }
+
+      btn.setAttribute('disabled', 'true');
+      btn.textContent = 'Menghapus...';
+
+      try {
+        const res = await fetch(`/api/admin/audit-logs?id=${encodeURIComponent(id)}`, {
+          method: 'DELETE'
+        });
+        const json = await res.json();
+        if (json.success) {
+          const row = document.getElementById(`audit-row-${id}`);
+          if (row) {
+            row.style.opacity = '0';
+            row.style.transition = 'opacity 0.25s ease';
+            setTimeout(() => row.remove(), 250);
+          }
+        } else {
+          alert(json.error?.message || 'Gagal menghapus log audit');
+          btn.removeAttribute('disabled');
+          btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> <span>Hapus</span>';
+        }
+      } catch (err: any) {
+        alert(err.message || 'Error deleting audit log');
+        btn.removeAttribute('disabled');
+      }
+    });
+  });
+
+  // Delete ALL Audit Logs action handler
+  const btnDeleteAll = document.getElementById('btn-delete-all-audit-logs');
+  btnDeleteAll?.addEventListener('click', async () => {
+    if (!confirm('Apakah Anda yakin ingin MENGHAPUS SEMUA DATA LOG AUDIT VERIFIKASI? Tindakan ini akan mengosongkan seluruh riwayat verifikasi dan tidak dapat dibatalkan.')) {
+      return;
+    }
+
+    btnDeleteAll.setAttribute('disabled', 'true');
+    btnDeleteAll.textContent = 'Menghapus Semua...';
+
+    try {
+      const res = await fetch('/api/admin/audit-logs?all=true', {
+        method: 'DELETE'
+      });
+      const json = await res.json();
+      if (json.success) {
+        const tbody = document.querySelector('.audit-table tbody');
+        if (tbody) {
+          tbody.innerHTML = '<tr><td colspan="29" style="text-align: center; padding: 2rem; color: var(--color-gray-400);">Belum ada log verifikasi yang tercatat.</td></tr>';
+        }
+        const badge = document.getElementById('audit-logs-badge');
+        if (badge) badge.textContent = '0 Records';
+        btnDeleteAll.style.display = 'none';
+      } else {
+        alert(json.error?.message || 'Gagal menghapus semua log audit');
+        btnDeleteAll.removeAttribute('disabled');
+        btnDeleteAll.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg> <span>Hapus Semua Log</span>';
+      }
+    } catch (err: any) {
+      alert(err.message || 'Error deleting all audit logs');
+      btnDeleteAll.removeAttribute('disabled');
+    }
+  });
+
+  // ==========================================
+  // ANTI-TYPO & REGEX AUDIT LOGS SEARCH ENGINE
+  // ==========================================
+  const searchInput = document.getElementById('audit-search-input') as HTMLInputElement | null;
+  const btnClearSearch = document.getElementById('btn-clear-search');
+  const btnEmptyReset = document.getElementById('btn-empty-reset');
+  const visibleCountEl = document.getElementById('search-visible-count');
+  const totalCountEl = document.getElementById('search-total-count');
+  const emptyRowEl = document.getElementById('audit-empty-search-row');
+  const emptyKeywordEl = document.getElementById('empty-search-keyword');
+  const filterPills = document.querySelectorAll('.filter-pill');
+
+  let activeFilter = 'all';
+
+  // Damerau-Levenshtein distance calculation (handles insertions, deletions, substitutions, and adjacent transpositions)
+  function calcDamerauLevenshtein(a: string, b: string): number {
+    const al = a.length;
+    const bl = b.length;
+    if (al === 0) return bl;
+    if (bl === 0) return al;
+
+    const d: number[][] = [];
+    for (let i = 0; i <= al; i++) {
+      d[i] = [i];
+    }
+    for (let j = 0; j <= bl; j++) {
+      d[0][j] = j;
+    }
+
+    for (let i = 1; i <= al; i++) {
+      for (let j = 1; j <= bl; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        d[i][j] = Math.min(
+          d[i - 1][j] + 1,       // deletion
+          d[i][j - 1] + 1,       // insertion
+          d[i - 1][j - 1] + cost // substitution
+        );
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+          d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1); // transposition
+        }
+      }
+    }
+    return d[al][bl];
+  }
+
+  // Check subsequence (fuzzy character sequence)
+  function isSubsequence(query: string, target: string): boolean {
+    if (query.length === 0) return true;
+    let qIdx = 0;
+    for (let i = 0; i < target.length; i++) {
+      if (target[i] === query[qIdx]) {
+        qIdx++;
+        if (qIdx === query.length) return true;
+      }
+    }
+    return false;
+  }
+
+  // Token anti-typo match against words
+  function matchTokenAntiTypo(token: string, words: string[], fullText: string): boolean {
+    if (fullText.includes(token)) return true;
+
+    const tLen = token.length;
+    if (tLen <= 2) {
+      return fullText.includes(token);
+    }
+
+    const maxDistance = tLen <= 4 ? 1 : (tLen <= 8 ? 2 : 3);
+
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      if (word.length === 0) continue;
+
+      if (word.includes(token)) return true;
+
+      if (Math.abs(word.length - tLen) <= maxDistance + 1) {
+        if (calcDamerauLevenshtein(token, word) <= maxDistance) {
+          return true;
+        }
+      } else if (word.length > tLen) {
+        // Sliding window on longer words (e.g. user agents, coordinates, IDs)
+        for (let w = 0; w <= word.length - tLen; w++) {
+          const sub = word.slice(w, w + tLen);
+          if (calcDamerauLevenshtein(token, sub) <= maxDistance) {
+            return true;
+          }
+        }
+      }
+
+      if (tLen >= 4 && isSubsequence(token, word)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Regex evaluator
+  function evaluateRegex(query: string, targetText: string): { isRegex: boolean; matched: boolean } {
+    if (query.startsWith('/') && query.lastIndexOf('/') > 0) {
+      const lastSlash = query.lastIndexOf('/');
+      const pattern = query.slice(1, lastSlash);
+      const flags = query.slice(lastSlash + 1) || 'i';
+      try {
+        const re = new RegExp(pattern, flags);
+        return { isRegex: true, matched: re.test(targetText) };
+      } catch (e) {
+        return { isRegex: false, matched: false };
+      }
+    }
+
+    const hasRegexSyntax = /[\^\$\*\+\?\[\]\(\)\{\}\|\\]/.test(query);
+    if (hasRegexSyntax) {
+      try {
+        const re = new RegExp(query, 'i');
+        return { isRegex: true, matched: re.test(targetText) };
+      } catch (e) {}
+    }
+
+    return { isRegex: false, matched: false };
+  }
+
+  function getRowDataList() {
+    const rows = Array.from(document.querySelectorAll('.audit-table tbody tr[id^="audit-row-"]')) as HTMLTableRowElement[];
+    return rows.map((row) => {
+      const text = row.textContent || '';
+      const lowerText = text.toLowerCase();
+      const words = lowerText.match(/[a-z0-9\._\-:]+/g) || [];
+
+      const status = row.querySelector('.badge-success') ? 'VERIFIED'
+                   : (row.querySelector('.badge-danger') ? 'FAILED'
+                   : (row.querySelector('.badge-warning') ? 'EXPIRED' : 'OTHER'));
+      const isMobile = (row.textContent || '').includes('MOBILE');
+      const hasCoordinates = !!row.querySelector('a[href*="google.com/maps"]');
+      const hasPhoto = !!row.querySelector('a[href*="drive.google.com"], a[href*="Foto"]');
+      const isVpn = row.getAttribute('data-is-vpn') === 'true' || !!row.querySelector('[data-vpn-detected="true"]');
+
+      return {
+        element: row,
+        id: row.id,
+        indexCell: row.cells[0],
+        rawText: text,
+        lowerText: lowerText,
+        words: words,
+        status: status,
+        isMobile: isMobile,
+        hasCoordinates: hasCoordinates,
+        hasPhoto: hasPhoto,
+        isVpn: isVpn
+      };
+    });
+  }
+
+  function applySearchAndFilter() {
+    const rawQuery = searchInput?.value.trim() || '';
+    const cleanQuery = rawQuery.toLowerCase();
+    const rows = getRowDataList();
+
+    if (totalCountEl) totalCountEl.textContent = String(rows.length);
+
+    if (btnClearSearch) {
+      btnClearSearch.style.display = rawQuery ? 'flex' : 'none';
+    }
+
+    let visibleIndex = 0;
+
+    rows.forEach((item) => {
+      let isVisible = true;
+
+      // Filter pills check
+      if (activeFilter === 'VERIFIED' && item.status !== 'VERIFIED') isVisible = false;
+      else if (activeFilter === 'FAILED' && item.status !== 'FAILED') isVisible = false;
+      else if (activeFilter === 'MOBILE' && !item.isMobile) isVisible = false;
+      else if (activeFilter === 'DESKTOP' && item.isMobile) isVisible = false;
+      else if (activeFilter === 'HAS_MAPS' && !item.hasCoordinates) isVisible = false;
+      else if (activeFilter === 'HAS_PHOTO' && !item.hasPhoto) isVisible = false;
+      else if (activeFilter === 'VPN' && !item.isVpn) isVisible = false;
+
+      // Search Query check
+      if (isVisible && rawQuery) {
+        const regexTest = evaluateRegex(rawQuery, item.rawText);
+        if (regexTest.isRegex) {
+          isVisible = regexTest.matched;
+        } else {
+          const tokens = cleanQuery.split(/\s+/).filter(Boolean);
+          for (let i = 0; i < tokens.length; i++) {
+            if (!matchTokenAntiTypo(tokens[i], item.words, item.lowerText)) {
+              isVisible = false;
+              break;
+            }
+          }
+        }
+      }
+
+      if (isVisible) {
+        item.element.style.display = '';
+        visibleIndex++;
+        if (item.indexCell) {
+          item.indexCell.textContent = String(visibleIndex);
+        }
+      } else {
+        item.element.style.display = 'none';
+      }
+    });
+
+    if (visibleCountEl) visibleCountEl.textContent = String(visibleIndex);
+
+    if (emptyRowEl) {
+      if (visibleIndex === 0 && (rawQuery || activeFilter !== 'all')) {
+        emptyRowEl.style.display = '';
+        if (emptyKeywordEl) {
+          emptyKeywordEl.textContent = rawQuery ? `"${rawQuery}"` : `filter "${activeFilter}"`;
+        }
+      } else {
+        emptyRowEl.style.display = 'none';
+      }
+    }
+  }
+
+  // Event Listeners for Search & Filters
+  searchInput?.addEventListener('input', applySearchAndFilter);
+
+  btnClearSearch?.addEventListener('click', () => {
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.focus();
+    }
+    applySearchAndFilter();
+  });
+
+  btnEmptyReset?.addEventListener('click', () => {
+    if (searchInput) searchInput.value = '';
+    activeFilter = 'all';
+    filterPills.forEach((p) => p.classList.toggle('active', p.getAttribute('data-filter') === 'all'));
+    applySearchAndFilter();
+  });
+
+  filterPills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      filterPills.forEach((p) => p.classList.remove('active'));
+      pill.classList.add('active');
+      activeFilter = pill.getAttribute('data-filter') || 'all';
+      applySearchAndFilter();
+    });
+  });
+</script>

@@ -1,0 +1,1125 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Icons from '../../components/Icons.astro';
+import AdminNav from '../../components/AdminNav.astro';
+import { verifyAdminSessionToken } from '../../lib/security';
+import { getAdminCookie } from '../../lib/session';
+
+export const prerender = false;
+
+// Admin authentication guard
+const adminToken = getAdminCookie(Astro.cookies);
+if (!verifyAdminSessionToken(adminToken)) {
+  return Astro.redirect('/admin/login', 302);
+}
+---
+
+<Layout
+  title="Create Protected Nota | Admin Portal"
+  description="Upload new official invoice/receipt and generate secure anti-fraud verification gate URL."
+  noindex={true}
+  isAdmin={true}
+>
+  <AdminNav currentTab="create" />
+
+  <div class="container-narrow admin-create-container">
+    <!-- Page Title -->
+    <div class="page-heading">
+      <h1 class="page-title" id="page-main-heading">Register New Protected Nota</h1>
+      <p class="page-subtitle" id="page-main-sub">
+        Pilih jenis proteksi: Unggah nota/faktur resmi atau buat link pelindung untuk tautan eksternal (Instagram, medsos, dsb).
+      </p>
+    </div>
+
+    <!-- SUCCESS CARD (Hidden by default) -->
+    <div id="create-success-card" class="card success-card" style="display: none;">
+      <div class="success-card-header">
+        <div class="success-icon-badge">
+          <Icons name="shield-check" size={32} />
+        </div>
+        <h2 class="success-title" id="success-card-title">
+          Nota Created Successfully
+        </h2>
+        <p class="success-subtitle" id="success-nota-number">
+          Nota #INV-XXXX-XXXX
+        </p>
+        <p class="success-hint" id="success-target-hint" style="display: none; font-size: 0.8rem; color: var(--color-blue-600); margin-top: 0.35rem;">
+          Pengunjung akan diaudit kamera &amp; lokasi sebelum dialihkan ke link tujuan.
+        </p>
+      </div>
+
+      <div class="verification-url-box">
+        <label class="form-label text-xs uppercase-label">
+          Public Link untuk Dibagikan:
+        </label>
+        <div class="copy-url-row">
+          <input
+            type="text"
+            id="created-verification-url"
+            class="form-input font-mono font-xs"
+            readonly
+          />
+          <button type="button" id="btn-copy-created-url" class="btn btn-secondary btn-copy-url">
+            <Icons name="copy" size={16} /> <span>Copy</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="success-action-buttons">
+        <a id="btn-open-created-nota" href="#" target="_blank" class="btn btn-primary btn-success-action">
+          <Icons name="external-link" size={16} /> <span>Buka Link Target</span>
+        </a>
+        <button type="button" id="btn-create-another" class="btn btn-secondary btn-success-action">
+          <span>+ Buat Lagi</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- CREATION MODE SELECTOR -->
+    <div class="entity-mode-toggle-bar">
+      <button type="button" id="tab-mode-nota" class="tab-entity-btn active">
+        <Icons name="file-text" size={16} />
+        <span>📄 Upload Nota Fisik</span>
+      </button>
+      <button type="button" id="tab-mode-link" class="tab-entity-btn">
+        <Icons name="external-link" size={16} />
+        <span>🔗 Link Target / Medsos</span>
+      </button>
+    </div>
+
+    <!-- FORM CARD -->
+    <div id="create-form-card" class="card form-card">
+      <div id="form-error-alert" class="alert alert-danger" style="display: none;">
+        <span id="form-error-text">Error creating nota</span>
+      </div>
+
+      <form id="create-nota-form" enctype="multipart/form-data">
+        <!-- Hidden Inputs for Mode & Metadata -->
+        <input type="hidden" id="entryType" name="type" value="nota" />
+        <input type="hidden" id="ogImage" name="ogImage" value="" />
+        <input type="hidden" id="siteName" name="siteName" value="" />
+
+        <!-- LINK TARGET SECTION (Active in Link Mode) -->
+        <div id="section-link-input" class="form-group" style="display: none;">
+          <label for="targetUrl" class="form-label">URL Target (Link Asli yang Dituju) *</label>
+          <div class="url-scrape-row">
+            <input
+              type="url"
+              id="targetUrl"
+              name="targetUrl"
+              class="form-input font-mono"
+              placeholder="Contoh: https://www.instagram.com/p/Dcxs8n4tGlk/..."
+            />
+            <button type="button" id="btn-scrape-og" class="btn btn-secondary btn-scrape-trigger">
+              <span id="scrape-icon"><Icons name="search" size={14} /></span>
+              <span id="scrape-text">Ambil Info</span>
+            </button>
+          </div>
+          <div class="form-help">
+            Masukkan link Instagram, TikTok, YouTube, atau artikel berita. Sistem akan mengekstrak judul, deskripsi, dan thumbnail Open Graph secara otomatis.
+          </div>
+
+          <!-- Live Social Media Card Preview -->
+          <div id="social-preview-box" class="social-preview-box" style="display: none;">
+            <div class="social-preview-header">
+              <span class="preview-badge-pill">
+                <Icons name="eye" size={12} />
+                <span>Pratinjau Saat Dibagikan di Medsos / WhatsApp:</span>
+              </span>
+            </div>
+            <div class="social-card-container">
+              <div class="social-card-img-holder">
+                <img id="social-card-img" src="" alt="Thumbnail OG" />
+                <div id="social-card-domain" class="social-card-domain">INSTAGRAM</div>
+              </div>
+              <div class="social-card-details">
+                <div id="social-card-title" class="social-card-title">Judul Link</div>
+                <div id="social-card-desc" class="social-card-desc">Deskripsi link...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div class="invoice-label-row">
+            <label for="notaNumber" class="form-label" style="margin-bottom: 0;">Nomor Nota / Tracking Code *</label>
+            
+            <!-- Mode Switcher: Auto vs Manual -->
+            <div class="mode-switcher-container">
+              <button
+                type="button"
+                id="btn-mode-auto"
+                class="mode-btn mode-btn-auto"
+              >
+                <Icons name="zap" size={13} />
+                <span>Auto</span>
+              </button>
+              <button
+                type="button"
+                id="btn-mode-manual"
+                class="mode-btn mode-btn-manual"
+              >
+                <Icons name="edit" size={13} />
+                <span>Manual</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="invoice-input-row">
+            <input
+              type="text"
+              id="notaNumber"
+              name="notaNumber"
+              class="form-input font-mono invoice-input"
+              placeholder="Contoh: INV-2026-00891"
+              required
+            />
+            <button
+              type="button"
+              id="btn-regenerate-invoice"
+              class="btn btn-secondary btn-randomize"
+              title="Generate nomor acak baru"
+            >
+              <Icons name="refresh-cw" size={14} /> <span>Acak</span>
+            </button>
+          </div>
+          <div class="form-help" id="nota-number-help">Nomor tracking / invoice otomatis dibuat secara unik.</div>
+        </div>
+
+        <div class="form-group">
+          <label for="title" class="form-label" id="label-title">Document Title / Judul Link *</label>
+          <input
+            type="text"
+            id="title"
+            name="title"
+            class="form-input"
+            placeholder="e.g. Official Server Gateway &amp; License Invoice"
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="description" class="form-label" id="label-desc">Deskripsi / Keterangan (Opsional)</label>
+          <textarea
+            id="description"
+            name="description"
+            rows="3"
+            class="form-textarea"
+            placeholder="e.g. Issued for PT Sentosa. Verified pursuant to standard cyber regulations."
+          ></textarea>
+        </div>
+
+        <!-- NOTA FILE UPLOAD SECTION (Active in Nota Mode) -->
+        <div id="section-file-upload" class="form-group">
+          <label class="form-label">Upload Gambar Nota / Invoice *</label>
+          
+          <!-- Modern Drag & Drop Zone -->
+          <div id="dropzone" class="upload-dropzone">
+            <input
+              type="file"
+              id="file"
+              name="file"
+              accept="image/jpeg,image/png,image/webp,image/*"
+              required
+              class="dropzone-input"
+            />
+
+            <!-- Empty Dropzone Content -->
+            <div id="dropzone-prompt">
+              <div class="upload-icon-circle">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+              </div>
+              <div class="dropzone-title">
+                Tarik &amp; Letakkan Gambar Nota ke Sini
+              </div>
+              <p class="dropzone-sub">
+                atau <span class="dropzone-link">klik untuk jelajahi file</span> dari komputer/HP
+              </p>
+              <div class="dropzone-formats">
+                Format: <strong>JPEG, PNG, WebP</strong> (Maks 10MB) &bull; Mendukung Paste (Ctrl+V)
+              </div>
+            </div>
+
+            <!-- Selected File Info & Live Preview -->
+            <div id="dropzone-preview" style="display: none;">
+              <div class="preview-img-wrapper">
+                <img
+                  id="image-preview"
+                  src=""
+                  alt="Preview Nota"
+                  class="preview-img"
+                />
+              </div>
+              <div class="preview-meta-row">
+                <span id="file-name-label" class="preview-filename font-mono">
+                  nama-file.jpg
+                </span>
+                <span id="file-size-label" class="preview-filesize">
+                  1.2 MB
+                </span>
+                <button type="button" id="btn-remove-file" class="btn btn-secondary btn-remove-img">
+                  Ganti File
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <button type="submit" id="btn-submit-nota" class="btn btn-primary btn-block btn-submit-form">
+          <Icons name="shield-check" size={18} /> <span>Encrypt &amp; Register Nota</span>
+        </button>
+      </form>
+    </div>
+
+  </div>
+</Layout>
+
+<style>
+  .admin-create-container {
+    padding-bottom: clamp(2rem, 5vw, 4rem);
+    width: 100%;
+  }
+
+  .page-heading {
+    margin-bottom: 1.5rem;
+  }
+
+  .page-title {
+    font-size: clamp(1.2rem, 2.5vw + 0.4rem, 1.45rem);
+    color: var(--color-navy-900);
+    margin-bottom: 0.25rem;
+  }
+
+  .page-subtitle {
+    font-size: clamp(0.78rem, 0.9vw + 0.4rem, 0.85rem);
+    color: var(--color-gray-500);
+    line-height: 1.4;
+  }
+
+  .success-card {
+    padding: clamp(1.2rem, 3vw, 2rem);
+    border-top: 4px solid var(--color-success-600);
+    margin-bottom: 2rem;
+  }
+
+  .success-card-header {
+    text-align: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .success-icon-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(48px, 10vw, 56px);
+    height: clamp(48px, 10vw, 56px);
+    background-color: var(--color-success-50);
+    color: var(--color-success-600);
+    border: 2px solid var(--color-success-500);
+    border-radius: var(--radius-full);
+    margin-bottom: 0.75rem;
+  }
+
+  .success-title {
+    font-size: clamp(1.15rem, 2vw + 0.5rem, 1.35rem);
+    color: var(--color-navy-900);
+    margin-bottom: 0.25rem;
+  }
+
+  .success-subtitle {
+    font-size: 0.85rem;
+    color: var(--color-gray-500);
+  }
+
+  .verification-url-box {
+    background-color: var(--color-gray-50);
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-md);
+    padding: 0.85rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .uppercase-label {
+    font-size: 0.75rem;
+    color: var(--color-gray-500);
+    text-transform: uppercase;
+  }
+
+  .copy-url-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-copy-url {
+    padding: 0.5rem 0.85rem;
+    min-height: 38px;
+  }
+
+  .success-action-buttons {
+    display: flex;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+  }
+
+  .btn-success-action {
+    flex: 1;
+    min-width: min(100%, 140px);
+  }
+
+  .form-card {
+    padding: clamp(1.2rem, 3vw, 1.75rem);
+  }
+
+  .invoice-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.4rem;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .mode-switcher-container {
+    display: inline-flex;
+    background: var(--color-gray-200);
+    padding: 3px;
+    border-radius: var(--radius-md);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
+  .mode-btn {
+    border: none;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+  }
+
+  .mode-btn-auto {
+    background: #ffffff;
+    color: var(--color-blue-600);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .mode-btn-manual {
+    background: transparent;
+    color: var(--color-gray-600);
+  }
+
+  .invoice-input-row {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+
+  .invoice-input {
+    flex: 1;
+    min-width: min(100%, 180px);
+    font-weight: 600;
+  }
+
+  .btn-randomize {
+    padding: 0.5rem 0.85rem;
+    font-size: 0.82rem;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .upload-dropzone {
+    border: 2px dashed var(--color-gray-300);
+    border-radius: var(--radius-lg);
+    padding: clamp(1.2rem, 3vw, 2rem) clamp(0.75rem, 2vw, 1.5rem);
+    text-align: center;
+    background-color: var(--color-gray-50);
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    position: relative;
+  }
+
+  .dropzone-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    z-index: 5;
+  }
+
+  .upload-icon-circle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(44px, 8vw, 54px);
+    height: clamp(44px, 8vw, 54px);
+    background-color: var(--color-blue-50);
+    color: var(--color-blue-600);
+    border-radius: var(--radius-full);
+    margin-bottom: 0.65rem;
+  }
+
+  .dropzone-title {
+    font-size: clamp(0.85rem, 1.2vw + 0.45rem, 0.95rem);
+    font-weight: 700;
+    color: var(--color-navy-900);
+    margin-bottom: 0.25rem;
+  }
+
+  .dropzone-sub {
+    font-size: clamp(0.75rem, 0.9vw + 0.4rem, 0.825rem);
+    color: var(--color-gray-500);
+    margin-bottom: 0.4rem;
+  }
+
+  .dropzone-link {
+    color: var(--color-blue-600);
+    font-weight: 600;
+    text-decoration: underline;
+  }
+
+  .dropzone-formats {
+    font-size: clamp(0.68rem, 0.8vw + 0.35rem, 0.75rem);
+    color: var(--color-gray-400);
+  }
+
+  .preview-img-wrapper {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+  }
+
+  .preview-img {
+    max-width: 100%;
+    max-height: 240px;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    object-fit: contain;
+    background: #ffffff;
+    padding: 4px;
+    border: 1px solid var(--color-gray-200);
+  }
+
+  .preview-meta-row {
+    margin-top: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+
+  .preview-filename {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-navy-900);
+  }
+
+  .preview-filesize {
+    font-size: 0.75rem;
+    color: var(--color-gray-500);
+    background: var(--color-gray-200);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  .btn-remove-img {
+    padding: 0.25rem 0.55rem;
+    font-size: 0.75rem;
+    color: var(--color-danger-600);
+    border-color: var(--color-danger-border);
+    z-index: 10;
+    position: relative;
+  }
+
+  .btn-submit-form {
+    padding: 0.85rem;
+    font-size: clamp(0.85rem, 1vw + 0.5rem, 0.95rem);
+    margin-top: 1.5rem;
+  }
+
+  /* Creation Mode Switcher */
+  .entity-mode-toggle-bar {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    background: var(--color-gray-200);
+    padding: 4px;
+    border-radius: var(--radius-lg);
+  }
+
+  .tab-entity-btn {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    font-size: clamp(0.8rem, 1vw + 0.5rem, 0.9rem);
+    font-weight: 700;
+    border: none;
+    background: transparent;
+    color: var(--color-gray-600);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .tab-entity-btn:hover {
+    color: var(--color-navy-900);
+  }
+
+  .tab-entity-btn.active {
+    background: #ffffff;
+    color: var(--color-blue-600);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .url-scrape-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: stretch;
+  }
+
+  .btn-scrape-trigger {
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+  }
+
+  /* Social Preview Card */
+  .social-preview-box {
+    margin-top: 1rem;
+    background: #090e1f;
+    border-radius: var(--radius-lg);
+    border: 1px solid #1e293b;
+    padding: 1rem;
+    color: #ffffff;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  }
+
+  .social-preview-header {
+    margin-bottom: 0.75rem;
+  }
+
+  .preview-badge-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+  }
+
+  .social-card-container {
+    background: #131d36;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid #283556;
+    max-width: 480px;
+    margin: 0 auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+
+  .social-card-img-holder {
+    width: 100%;
+    height: clamp(180px, 35vw, 220px);
+    background: #040817;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .social-card-img-holder img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .social-card-domain {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(4px);
+    color: #f1f5f9;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .social-card-details {
+    padding: 0.85rem 1rem;
+  }
+
+  .social-card-title {
+    font-weight: 700;
+    font-size: 0.92rem;
+    line-height: 1.35;
+    margin-bottom: 0.35rem;
+    color: #f8fafc;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .social-card-desc {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  @media (max-width: 480px) {
+    .url-scrape-row {
+      flex-direction: column;
+    }
+    .success-action-buttons {
+      flex-direction: column;
+    }
+    .invoice-input-row {
+      flex-direction: column;
+    }
+    .btn-randomize {
+      width: 100%;
+    }
+  }
+</style>
+
+<script>
+  const form = document.getElementById('create-nota-form') as HTMLFormElement;
+  const entryTypeInput = document.getElementById('entryType') as HTMLInputElement;
+  const ogImageInput = document.getElementById('ogImage') as HTMLInputElement;
+  const siteNameInput = document.getElementById('siteName') as HTMLInputElement;
+
+  const tabModeNota = document.getElementById('tab-mode-nota') as HTMLButtonElement;
+  const tabModeLink = document.getElementById('tab-mode-link') as HTMLButtonElement;
+  const sectionLinkInput = document.getElementById('section-link-input') as HTMLDivElement;
+  const sectionFileUpload = document.getElementById('section-file-upload') as HTMLDivElement;
+
+  const targetUrlInput = document.getElementById('targetUrl') as HTMLInputElement;
+  const btnScrapeOg = document.getElementById('btn-scrape-og') as HTMLButtonElement;
+  const scrapeIcon = document.getElementById('scrape-icon') as HTMLSpanElement;
+  const scrapeText = document.getElementById('scrape-text') as HTMLSpanElement;
+
+  const socialPreviewBox = document.getElementById('social-preview-box') as HTMLDivElement;
+  const socialCardImg = document.getElementById('social-card-img') as HTMLImageElement;
+  const socialCardDomain = document.getElementById('social-card-domain') as HTMLDivElement;
+  const socialCardTitle = document.getElementById('social-card-title') as HTMLDivElement;
+  const socialCardDesc = document.getElementById('social-card-desc') as HTMLDivElement;
+
+  const pageMainHeading = document.getElementById('page-main-heading') as HTMLHeadingElement;
+  const pageMainSub = document.getElementById('page-main-sub') as HTMLParagraphElement;
+  const labelTitle = document.getElementById('label-title') as HTMLLabelElement;
+  const labelDesc = document.getElementById('label-desc') as HTMLLabelElement;
+
+  const titleInput = document.getElementById('title') as HTMLInputElement;
+  const descriptionInput = document.getElementById('description') as HTMLTextAreaElement;
+  const notaNumberInput = document.getElementById('notaNumber') as HTMLInputElement;
+  const btnModeAuto = document.getElementById('btn-mode-auto') as HTMLButtonElement;
+  const btnModeManual = document.getElementById('btn-mode-manual') as HTMLButtonElement;
+  const btnRegenerateInvoice = document.getElementById('btn-regenerate-invoice') as HTMLButtonElement;
+  const notaNumberHelp = document.getElementById('nota-number-help') as HTMLDivElement;
+
+  const fileInput = document.getElementById('file') as HTMLInputElement;
+  const dropzone = document.getElementById('dropzone') as HTMLDivElement;
+  const dropzonePrompt = document.getElementById('dropzone-prompt') as HTMLDivElement;
+  const dropzonePreview = document.getElementById('dropzone-preview') as HTMLDivElement;
+  const imagePreview = document.getElementById('image-preview') as HTMLImageElement;
+  const fileNameLabel = document.getElementById('file-name-label') as HTMLSpanElement;
+  const fileSizeLabel = document.getElementById('file-size-label') as HTMLSpanElement;
+  const btnRemoveFile = document.getElementById('btn-remove-file') as HTMLButtonElement;
+
+  const formCard = document.getElementById('create-form-card') as HTMLDivElement;
+  const successCard = document.getElementById('create-success-card') as HTMLDivElement;
+  const successCardTitle = document.getElementById('success-card-title') as HTMLHeadingElement;
+  const successTargetHint = document.getElementById('success-target-hint') as HTMLParagraphElement;
+  const errorAlert = document.getElementById('form-error-alert') as HTMLDivElement;
+  const errorText = document.getElementById('form-error-text') as HTMLSpanElement;
+  const btnSubmit = document.getElementById('btn-submit-nota') as HTMLButtonElement;
+
+  const successNotaNumber = document.getElementById('success-nota-number') as HTMLParagraphElement;
+  const createdUrlInput = document.getElementById('created-verification-url') as HTMLInputElement;
+  const btnOpenCreated = document.getElementById('btn-open-created-nota') as HTMLAnchorElement;
+  const btnCopyCreated = document.getElementById('btn-copy-created-url') as HTMLButtonElement;
+  const btnCreateAnother = document.getElementById('btn-create-another') as HTMLButtonElement;
+
+  // Invoice Number Generation Helper
+  function generateInvoiceNumber(): string {
+    const year = new Date().getFullYear();
+    const randomDigits = Math.floor(100000 + Math.random() * 900000); // 6 digits
+    return `INV-${year}-${randomDigits}`;
+  }
+
+  let isAutoMode = true;
+  let currentCreationMode: 'nota' | 'link' = 'nota';
+
+  function setCreationMode(mode: 'nota' | 'link') {
+    currentCreationMode = mode;
+    entryTypeInput.value = mode;
+
+    if (mode === 'link') {
+      tabModeLink.classList.add('active');
+      tabModeNota.classList.remove('active');
+      sectionLinkInput.style.display = 'block';
+      sectionFileUpload.style.display = 'none';
+
+      fileInput.removeAttribute('required');
+      targetUrlInput.setAttribute('required', 'required');
+
+      pageMainHeading.textContent = 'Register Protected Target Link';
+      pageMainSub.textContent = 'Buat link pelindung / jebakan dengan preview Open Graph asli (Instagram, YouTube, medsos) dan auto-redirect setelah audit.';
+      labelTitle.textContent = 'Judul Tautan / Postingan *';
+      labelDesc.textContent = 'Deskripsi Pratinjau Medsos (Opsional)';
+      titleInput.placeholder = 'e.g. Official Instagram Post / Video Update';
+
+      btnSubmit.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> <span>Generate Protected Link &amp; Activate Audit</span>';
+    } else {
+      tabModeNota.classList.add('active');
+      tabModeLink.classList.remove('active');
+      sectionLinkInput.style.display = 'none';
+      sectionFileUpload.style.display = 'block';
+
+      fileInput.setAttribute('required', 'required');
+      targetUrlInput.removeAttribute('required');
+
+      pageMainHeading.textContent = 'Register New Protected Nota';
+      pageMainSub.textContent = 'Dokumen yang diunggah akan dienkripsi dan dikunci sampai penerima menyelesaikan audit anti-fraud.';
+      labelTitle.textContent = 'Document Title / Subject *';
+      labelDesc.textContent = 'Description / Remarks (Optional)';
+      titleInput.placeholder = 'e.g. Official Server Gateway & License Invoice';
+
+      btnSubmit.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg> <span>Encrypt &amp; Register Nota</span>';
+    }
+  }
+
+  tabModeNota?.addEventListener('click', () => setCreationMode('nota'));
+  tabModeLink?.addEventListener('click', () => setCreationMode('link'));
+
+  // OG Scraping Handler
+  btnScrapeOg?.addEventListener('click', async () => {
+    const rawUrl = targetUrlInput.value.trim();
+    if (!rawUrl) {
+      alert('Masukkan URL target terlebih dahulu!');
+      targetUrlInput.focus();
+      return;
+    }
+
+    // Set scraping loading state
+    btnScrapeOg.disabled = true;
+    const originalIcon = scrapeIcon.innerHTML;
+    const originalText = scrapeText.textContent;
+    scrapeIcon.innerHTML = '<svg class="spinner-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+    scrapeText.textContent = 'Mengambil...';
+
+    try {
+      const res = await fetch('/api/admin/scrape-og', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: rawUrl })
+      });
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        throw new Error(json.error?.message || 'Gagal mengekstrak Open Graph dari link.');
+      }
+
+      const meta = json.data;
+      if (meta.title) titleInput.value = meta.title;
+      if (meta.description) descriptionInput.value = meta.description;
+      if (meta.ogImage) ogImageInput.value = meta.ogImage;
+      if (meta.siteName) siteNameInput.value = meta.siteName;
+
+      // Update Social Preview Box
+      socialCardTitle.textContent = meta.title || rawUrl;
+      socialCardDesc.textContent = meta.description || 'Pratinjau konten web...';
+      socialCardDomain.textContent = (meta.siteName || new URL(meta.targetUrl || rawUrl).hostname).toUpperCase();
+
+      if (meta.ogImage) {
+        socialCardImg.src = meta.ogImage;
+        socialCardImg.style.display = 'block';
+      } else {
+        socialCardImg.style.display = 'none';
+      }
+
+      socialPreviewBox.style.display = 'block';
+
+      // Pulse feedback animation on title
+      titleInput.style.transition = 'all 0.2s ease';
+      titleInput.style.backgroundColor = 'var(--color-blue-50)';
+      setTimeout(() => {
+        titleInput.style.backgroundColor = '';
+      }, 300);
+
+    } catch (err: any) {
+      alert('Peringatan: ' + (err.message || 'Tidak dapat mengambil metadata. Anda dapat mengisi judul dan deskripsi secara manual.'));
+    } finally {
+      btnScrapeOg.disabled = false;
+      scrapeIcon.innerHTML = originalIcon;
+      scrapeText.textContent = originalText;
+    }
+  });
+
+  // Auto-scrape on Enter in targetUrl input
+  targetUrlInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      btnScrapeOg.click();
+    }
+  });
+
+  function setInvoiceMode(mode: 'auto' | 'manual') {
+    isAutoMode = mode === 'auto';
+
+    if (isAutoMode) {
+      btnModeAuto.style.background = '#ffffff';
+      btnModeAuto.style.color = 'var(--color-blue-600)';
+      btnModeAuto.style.boxShadow = 'var(--shadow-sm)';
+
+      btnModeManual.style.background = 'transparent';
+      btnModeManual.style.color = 'var(--color-gray-600)';
+      btnModeManual.style.boxShadow = 'none';
+
+      btnRegenerateInvoice.style.display = 'inline-flex';
+      notaNumberInput.value = generateInvoiceNumber();
+      notaNumberHelp.textContent = 'Nomor tracking / invoice otomatis dibuat secara unik (klik Acak untuk nomor lain, atau pilih Manual).';
+    } else {
+      btnModeManual.style.background = '#ffffff';
+      btnModeManual.style.color = 'var(--color-blue-600)';
+      btnModeManual.style.boxShadow = 'var(--shadow-sm)';
+
+      btnModeAuto.style.background = 'transparent';
+      btnModeAuto.style.color = 'var(--color-gray-600)';
+      btnModeAuto.style.boxShadow = 'none';
+
+      btnRegenerateInvoice.style.display = 'none';
+      notaNumberInput.placeholder = 'Ketik kode kustom manual...';
+      notaNumberHelp.textContent = 'Mode manual aktif: Masukkan nomor atau kode kustom Anda.';
+      notaNumberInput.focus();
+    }
+  }
+
+  // Invoice Mode Listeners
+  btnModeAuto?.addEventListener('click', () => setInvoiceMode('auto'));
+  btnModeManual?.addEventListener('click', () => setInvoiceMode('manual'));
+
+  btnRegenerateInvoice?.addEventListener('click', () => {
+    notaNumberInput.value = generateInvoiceNumber();
+    notaNumberInput.style.transition = 'all 0.15s ease';
+    notaNumberInput.style.backgroundColor = 'var(--color-blue-50)';
+    setTimeout(() => {
+      notaNumberInput.style.backgroundColor = '';
+    }, 200);
+  });
+
+  // Initial setup
+  setInvoiceMode('auto');
+  setCreationMode('nota');
+
+  function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  function handleFileSelected(file: File) {
+    if (!file) return;
+
+    if (!file.type.match(/image\/(jpeg|png|webp)/i)) {
+      alert('Format file tidak didukung! Harap gunakan file JPEG, PNG, atau WebP.');
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Ukuran file terlalu besar! Maksimal ukuran file adalah 10MB.');
+      return;
+    }
+
+    fileNameLabel.textContent = file.name;
+    fileSizeLabel.textContent = formatBytes(file.size);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      imagePreview.src = e.target?.result as string;
+      dropzonePrompt.style.display = 'none';
+      dropzonePreview.style.display = 'block';
+      dropzone.style.borderColor = 'var(--color-blue-600)';
+      dropzone.style.backgroundColor = '#ffffff';
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // File Input Change
+  fileInput?.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if (file) {
+      handleFileSelected(file);
+    }
+  });
+
+  // Drag and Drop Effects
+  ['dragenter', 'dragover'].forEach((eventName) => {
+    dropzone?.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.style.borderColor = 'var(--color-blue-600)';
+      dropzone.style.backgroundColor = 'var(--color-blue-50)';
+      dropzone.style.transform = 'scale(1.01)';
+    });
+  });
+
+  ['dragleave', 'drop'].forEach((eventName) => {
+    dropzone?.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.style.transform = 'scale(1)';
+      if (eventName === 'dragleave') {
+        dropzone.style.borderColor = 'var(--color-gray-300)';
+        dropzone.style.backgroundColor = 'var(--color-gray-50)';
+      }
+    });
+  });
+
+  dropzone?.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    if (dt && dt.files && dt.files.length > 0) {
+      fileInput.files = dt.files;
+      handleFileSelected(dt.files[0]);
+    }
+  });
+
+  // Clipboard Paste Support (Ctrl+V)
+  window.addEventListener('paste', (e) => {
+    if (currentCreationMode !== 'nota') return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') !== -1) {
+        const file = items[i].getAsFile();
+        if (file) {
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          fileInput.files = dt.files;
+          handleFileSelected(file);
+          break;
+        }
+      }
+    }
+  });
+
+  // Remove / Change File
+  btnRemoveFile?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fileInput.value = '';
+    dropzonePrompt.style.display = 'block';
+    dropzonePreview.style.display = 'none';
+    dropzone.style.borderColor = 'var(--color-gray-300)';
+    dropzone.style.backgroundColor = 'var(--color-gray-50)';
+  });
+
+  // Submit Handler
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorAlert.style.display = 'none';
+    btnSubmit.disabled = true;
+    const originalSubmitHtml = btnSubmit.innerHTML;
+    btnSubmit.textContent = currentCreationMode === 'link' ? 'Generating Protected Link...' : 'Encrypting & Storing...';
+
+    try {
+      const formData = new FormData(form);
+
+      const res = await fetch('/api/admin/upload', {
+        method: 'POST',
+        body: formData
+      });
+
+      const json = await res.json();
+      if (!json.success || !json.data) {
+        throw new Error(json.error?.message || 'Failed to create item.');
+      }
+
+      const fullUrl = `${window.location.origin}/nota/${json.data.notaId}`;
+      createdUrlInput.value = fullUrl;
+      btnOpenCreated.href = `/nota/${json.data.notaId}`;
+      successNotaNumber.textContent = `${currentCreationMode === 'link' ? 'Link Target' : 'Nota'} #${json.data.notaNumber} (ID: ${json.data.notaId})`;
+
+      if (currentCreationMode === 'link') {
+        successCardTitle.textContent = 'Link Target Berhasil Dibuat!';
+        successTargetHint.style.display = 'block';
+        successTargetHint.textContent = `Tujuan Redirect: ${targetUrlInput.value.trim()}`;
+      } else {
+        successCardTitle.textContent = 'Nota Created Successfully';
+        successTargetHint.style.display = 'none';
+      }
+
+      formCard.style.display = 'none';
+      successCard.style.display = 'block';
+    } catch (err: any) {
+      errorAlert.style.display = 'block';
+      errorText.textContent = err.message || 'Submission error';
+      btnSubmit.disabled = false;
+      btnSubmit.innerHTML = originalSubmitHtml;
+    }
+  });
+
+  // Copy handler
+  btnCopyCreated?.addEventListener('click', async () => {
+    if (createdUrlInput.value) {
+      await navigator.clipboard.writeText(createdUrlInput.value);
+      const originalHtml = btnCopyCreated.innerHTML;
+      btnCopyCreated.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied';
+      setTimeout(() => {
+        btnCopyCreated.innerHTML = originalHtml;
+      }, 2000);
+    }
+  });
+
+  // Create another handler
+  btnCreateAnother?.addEventListener('click', () => {
+    form.reset();
+    fileInput.value = '';
+    targetUrlInput.value = '';
+    ogImageInput.value = '';
+    siteNameInput.value = '';
+    socialPreviewBox.style.display = 'none';
+    dropzonePrompt.style.display = 'block';
+    dropzonePreview.style.display = 'none';
+    dropzone.style.borderColor = 'var(--color-gray-300)';
+    dropzone.style.backgroundColor = 'var(--color-gray-50)';
+    successCard.style.display = 'none';
+    formCard.style.display = 'block';
+    setInvoiceMode('auto');
+    setCreationMode(currentCreationMode);
+    btnSubmit.disabled = false;
+  });
+</script>

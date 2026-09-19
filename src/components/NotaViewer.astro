@@ -1,0 +1,323 @@
+---
+import Icons from './Icons.astro';
+import type { Nota } from '../lib/types';
+
+interface Props {
+  nota: Nota;
+  verificationId: string;
+  verifiedAt: number;
+}
+
+const { nota, verificationId, verifiedAt } = Astro.props;
+
+// Format verified date (e.g. 25 Aug 2026, 10:42 WIB)
+const dateFormatted = new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: 'Asia/Jakarta'
+}).format(new Date(verifiedAt));
+---
+
+<div class="card nota-viewer-card">
+  <!-- Top Verification Status Banner -->
+  <div class="viewer-header">
+    <div class="verified-icon-badge">
+      <Icons name="shield-check" size={32} />
+    </div>
+
+    <h1 class="verified-title">
+      <span>VERIFIED</span> <Icons name="check" size={22} />
+    </h1>
+
+    <p class="verified-nota-num">
+      Nota {nota.notaNumber}
+    </p>
+
+    <div class="verified-time-pill">
+      <span>Completed: <strong>{dateFormatted} WIB</strong></span>
+    </div>
+  </div>
+
+  <!-- Certificate Info Pills Grid -->
+  <div class="info-pills-grid">
+    <div class="info-pill">
+      <div class="info-pill-label">Document Title</div>
+      <div class="info-pill-value">{nota.title}</div>
+    </div>
+
+    <div class="info-pill">
+      <div class="info-pill-label">Verification ID</div>
+      <div class="info-pill-value font-mono">{verificationId}</div>
+    </div>
+
+    <div class="info-pill">
+      <div class="info-pill-label">Anti-Fraud Seal</div>
+      <div class="info-pill-value text-success">
+        <Icons name="check" size={14} /> FIPS 140-2 Validated
+      </div>
+    </div>
+  </div>
+
+  <!-- Protected Nota Image / Target Link Render -->
+  <div class="image-showcase-box">
+    <div class="image-showcase-header">
+      <span class="image-showcase-title">
+        {nota.type === 'link' ? 'Target Destination Preview' : 'Protected Original Document'}
+      </span>
+      <span class="badge badge-success">Cryptographically Unlocked</span>
+    </div>
+
+    {nota.type === 'link' && nota.targetUrl && (
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: var(--radius-md); padding: 0.85rem 1rem; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
+        <div style="min-width: 0; flex: 1;">
+          <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--color-gray-500); font-weight: 700; letter-spacing: 0.04em;">Target Redirection URL</div>
+          <a href={nota.targetUrl} target="_blank" rel="noopener" class="font-mono" style="font-size: 0.85rem; color: var(--color-blue-700); font-weight: 600; word-break: break-all;">
+            {nota.targetUrl}
+          </a>
+        </div>
+        <a href={nota.targetUrl} target="_blank" rel="noopener" class="btn btn-primary" style="padding: 0.45rem 0.85rem; font-size: 0.82rem; white-space: nowrap;">
+          <Icons name="external-link" size={13} /> <span>Open Destination</span>
+        </a>
+      </div>
+    )}
+
+    <div class="image-render-frame">
+      <img
+        src={nota.ogImage || `/api/nota/${nota.id}/image`}
+        alt={`Nota #${nota.notaNumber}`}
+        class="nota-document-img"
+        loading="eager"
+      />
+    </div>
+  </div>
+
+  {nota.description && (
+    <div class="remarks-box">
+      <div class="remarks-title">ADMIN REMARKS</div>
+      <p class="remarks-content">{nota.description}</p>
+    </div>
+  )}
+
+  <!-- Footer Actions -->
+  <div class="viewer-footer-actions">
+    <button type="button" onclick="window.print()" class="btn btn-secondary action-btn-print">
+      <Icons name="file-text" size={16} /> <span>Print / Save PDF</span>
+    </button>
+
+    <div class="footer-btn-group">
+      <a href={`/verify/${nota.id}`} class="btn btn-secondary action-btn-nav">
+        <Icons name="refresh-cw" size={14} /> <span>Re-verify</span>
+      </a>
+      <a href="/" class="btn btn-primary action-btn-nav">
+        <span>Back to Home</span>
+      </a>
+    </div>
+  </div>
+</div>
+
+<style>
+  .nota-viewer-card {
+    padding: clamp(1.2rem, 3vw + 0.5rem, 2rem);
+    border-top: 4px solid var(--color-success-600);
+    box-shadow: var(--shadow-md);
+    width: 100%;
+  }
+
+  .viewer-header {
+    text-align: center;
+    margin-bottom: 1.75rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px dashed var(--color-gray-300);
+  }
+
+  .verified-icon-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: clamp(48px, 10vw, 64px);
+    height: clamp(48px, 10vw, 64px);
+    background-color: var(--color-success-50);
+    border: 2px solid var(--color-success-500);
+    border-radius: var(--radius-full);
+    margin-bottom: 0.75rem;
+    color: var(--color-success-600);
+  }
+
+  .verified-title {
+    font-size: clamp(1.3rem, 3vw + 0.5rem, 1.65rem);
+    color: var(--color-success-600);
+    margin-bottom: 0.25rem;
+  }
+
+  .verified-nota-num {
+    font-size: clamp(0.9rem, 1.5vw + 0.4rem, 1.05rem);
+    font-weight: 700;
+    color: var(--color-navy-900);
+    margin-bottom: 0.5rem;
+  }
+
+  .verified-time-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--color-gray-100);
+    padding: 0.35rem 0.85rem;
+    border-radius: var(--radius-full);
+    font-size: clamp(0.72rem, 0.8vw + 0.4rem, 0.82rem);
+    color: var(--color-gray-700);
+    max-width: 100%;
+  }
+
+  .info-pills-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .info-pill {
+    background-color: var(--color-gray-50);
+    padding: 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-gray-200);
+    min-width: 0;
+  }
+
+  .info-pill-label {
+    font-size: 0.72rem;
+    color: var(--color-gray-500);
+    text-transform: uppercase;
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+  }
+
+  .info-pill-value {
+    font-size: clamp(0.82rem, 1vw + 0.45rem, 0.9rem);
+    font-weight: 600;
+    color: var(--color-navy-900);
+    overflow-wrap: break-word;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+    color: var(--color-blue-600);
+  }
+
+  .text-success {
+    color: var(--color-success-600);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .image-showcase-box {
+    background: var(--color-gray-100);
+    border: 1px solid var(--color-gray-300);
+    border-radius: var(--radius-md);
+    padding: clamp(0.5rem, 1.5vw, 0.75rem);
+    text-align: center;
+    margin-bottom: 1.75rem;
+  }
+
+  .image-showcase-header {
+    margin-bottom: 0.65rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .image-showcase-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--color-gray-500);
+    text-transform: uppercase;
+  }
+
+  .image-render-frame {
+    background: #ffffff;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    max-width: 100%;
+  }
+
+  .nota-document-img {
+    width: 100%;
+    max-width: 720px;
+    height: auto;
+    max-height: 80vh;
+    object-fit: contain;
+    display: block;
+  }
+
+  .remarks-box {
+    background-color: var(--color-blue-50);
+    border: 1px solid #bfdbfe;
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .remarks-title {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-blue-600);
+    margin-bottom: 0.25rem;
+  }
+
+  .remarks-content {
+    font-size: clamp(0.82rem, 1vw + 0.45rem, 0.875rem);
+    color: var(--color-navy-900);
+    margin: 0;
+  }
+
+  .viewer-footer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-gray-200);
+  }
+
+  .footer-btn-group {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 480px) {
+    .viewer-footer-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .action-btn-print {
+      width: 100%;
+    }
+    .footer-btn-group {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    .action-btn-nav {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 320px) {
+    .viewer-time-pill {
+      border-radius: var(--radius-sm);
+      text-align: center;
+    }
+  }
+</style>
