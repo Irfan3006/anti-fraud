@@ -2,6 +2,9 @@
 
 An enterprise-grade, forensic document verification and canary tracking platform engineered with Astro Server-Side Rendering (SSR), TypeScript, and a high-performance vanilla CSS design system. The application operates on Vercel Serverless infrastructure, coupling client-side hardware telemetry with persistent cloud archiving in Google Drive, structured audit logging in Google Sheets via Google Apps Script, and real-time alert dispatching through the Telegram Bot API.
 
+> **Disclaimer and Educational Use Notice**  
+> This repository and its contents are intended solely for educational purposes, forensic fraud research, and authorized security testing. The author assumes no responsibility or legal liability for any unauthorized deployment, illicit surveillance, misuse, damages, or criminal offenses resulting from the use of this software. End users are solely responsible for compliance with all applicable local, national, and international laws.
+
 ---
 
 ## 1. System Overview and Core Architecture
@@ -455,9 +458,11 @@ The Google Apps Script deployment acts as a persistent storage gateway to Google
 
 ---
 
-## 18. Operational Guidelines and Compliance
+## 18. Operational Guidelines and Legal Disclaimer
 
 This software is developed strictly for authorized transaction verification, forensic fraud analysis, and digital audit operations. Operators must ensure deployments adhere to applicable telecommunications laws, electronic privacy regulations, and organizational data handling standards.
+
+The author and contributors explicitly disclaim all liability for damages, criminal proceedings, regulatory penalties, or civil actions arising from the deployment, unauthorized interception, or misuse of this codebase. Users bear sole criminal and civil responsibility for ensuring that all telemetry and evidence collection activities comply fully with the jurisdictions in which they operate.
 
 ---
 
