@@ -27,6 +27,15 @@ const { currentTab = 'dashboard' } = Astro.props;
     </div>
 
     <div class="admin-nav-actions">
+      <button
+        type="button"
+        id="test-telegram-btn"
+        class="btn btn-secondary admin-nav-btn"
+        title="Uji kirim notifikasi ke Bot Telegram"
+      >
+        <Icons name="zap" size={14} /> <span id="test-telegram-btn-label">Test Bot</span>
+      </button>
+
       <a
         href="/nota/8f92a7c1"
         target="_blank"
@@ -46,6 +55,33 @@ const { currentTab = 'dashboard' } = Astro.props;
     </div>
   </div>
 </div>
+
+<script>
+  const testBtn = document.getElementById('test-telegram-btn');
+  const btnLabel = document.getElementById('test-telegram-btn-label');
+
+  testBtn?.addEventListener('click', async () => {
+    if (!testBtn || !btnLabel) return;
+    const origText = btnLabel.textContent;
+    btnLabel.textContent = 'Mengirim...';
+    testBtn.setAttribute('disabled', 'true');
+
+    try {
+      const res = await fetch('/api/admin/test-telegram', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        alert('✅ ' + data.message);
+      } else {
+        alert('❌ Gagal: ' + (data.message || data.error?.message || 'Tidak diketahui'));
+      }
+    } catch (err: any) {
+      alert('❌ Error menghubungi server: ' + err.message);
+    } finally {
+      btnLabel.textContent = origText;
+      testBtn.removeAttribute('disabled');
+    }
+  });
+</script>
 
 <style>
   .admin-subnav {
